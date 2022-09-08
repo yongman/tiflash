@@ -40,8 +40,6 @@ public:
     void setMockStorage(MockStorage & mock_storage);
     void setMockMPPServerInfo(MockMPPServerInfo info);
 
-    std::unique_ptr<FlashService> & flashService();
-
 private:
     const LoggerPtr & log;
     std::shared_ptr<std::atomic<bool>> is_shutdown;

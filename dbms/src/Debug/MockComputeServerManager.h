@@ -15,10 +15,9 @@
 #pragma once
 
 #include <Debug/MockStorage.h>
-#include <Flash/Mpp/MPPTaskManager.h>
 #include <Server/FlashGrpcServerHolder.h>
-#include <Storages/Transaction/TMTContext.h>
-#include <TestUtils/TiFlashTestEnv.h>
+
+#include <unordered_map>
 
 namespace DB::tests
 {
@@ -35,8 +34,6 @@ public:
     /// call startServers to run all servers in current test.
     void startServers(const LoggerPtr & log_ptr, Context & global_context);
 
-    void startServers(const LoggerPtr & log_ptr, int start_idx);
-
     /// set MockStorage for Compute Server in order to mock input columns.
     void setMockStorage(MockStorage & mock_storage);
 
@@ -48,10 +45,6 @@ public:
     std::unordered_map<size_t, MockServerConfig> & getServerConfigMap();
 
     void resetMockMPPServerInfo(size_t partition_num);
-
-    void cancelQuery(size_t start_ts);
-
-    static String queryInfo();
 
 private:
     void addServer(size_t partition_id, std::unique_ptr<FlashGrpcServerHolder> server);
