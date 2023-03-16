@@ -875,4 +875,24 @@ std::string_view buffToStrView(const BaseBuffView & buf)
     return std::string_view{buf.data, buf.len};
 }
 
+BaseBuffView GetLockByKey(
+    const EngineStoreServerWrap * server,
+    uint64_t region_id,
+    BaseBuffView key)
+{
+    auto tikv_key = TiKVKey(key.data, key.len);
+    try
+    {
+        auto & kvstore = server->tmt->getKVStore();
+        auto region = kvstore->getRegion(region_id);
+        auto value = region->getLockByKey(tikv_key);
+        return BaseBuffView{value->data(), value->dataSize()};
+    }
+    catch (...)
+    {
+        LOG_WARNING(&Poco::Logger::get(__FUNCTION__), "Failed to get lock by key {}, region id {}", tikv_key.toDebugString(), region_id);
+        return BaseBuffView{};
+    }
+}
+
 } // namespace DB

@@ -159,6 +159,7 @@ RawCppPtr PreHandleSnapshot(
     uint64_t index,
     uint64_t term);
 void ApplyPreHandledSnapshot(EngineStoreServerWrap * server, void * res, RawCppPtrType type);
+BaseBuffView GetLockByKey(const EngineStoreServerWrap * server, uint64_t region_id, BaseBuffView key);
 HttpRequestRes HandleHttpRequest(EngineStoreServerWrap *, BaseBuffView path, BaseBuffView query, BaseBuffView body);
 uint8_t CheckHttpUriAvailable(BaseBuffView);
 void GcRawCppPtr(void * ptr, RawCppPtrType type);
@@ -217,9 +218,11 @@ inline EngineStoreServerHelper GetEngineStoreServerHelper(
         .fn_set_pb_msg_by_bytes = SetPBMsByBytes,
         .fn_handle_safe_ts_update = HandleSafeTSUpdate,
         .fn_fast_add_peer = FastAddPeer,
+        .fn_get_lock_by_key = GetLockByKey,
     };
 }
 
 std::string_view buffToStrView(const BaseBuffView & buf);
+
 
 } // namespace DB
