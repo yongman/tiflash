@@ -287,6 +287,16 @@ RegionMap RegionPersister::restore(PathPool & path_pool, const TiFlashRaftProxyH
         auto region = Region::deserialize(buf, proxy_helper);
         if (page.page_id != region->id())
             throw Exception("region id and page id not match!", ErrorCodes::LOGICAL_ERROR);
+        if (global_context.isKeyspaceInBlacklist(region->getKeyspaceID()))
+        {
+            LOG_WARNING(log, "Region {} skip restore because keyspace_id {} in blacklist", region->id(), region->getKeyspaceID());
+            return;
+        }
+        if (global_context.isRegionInBlacklist(region->id()))
+        {
+            LOG_WARNING(log, "Region {} skip restore because region_id {} in blacklist", region->id(), region->id());
+            return;
+        }
 
         regions.emplace(page.page_id, region);
     };
