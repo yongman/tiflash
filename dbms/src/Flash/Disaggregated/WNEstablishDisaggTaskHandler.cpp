@@ -48,6 +48,12 @@ void WNEstablishDisaggTaskHandler::prepare(const disaggregated::EstablishDisaggT
     TablesRegionsInfo tables_regions_info = TablesRegionsInfo::create(request->regions(), request->table_regions(), tmt_context);
     LOG_DEBUG(log, "DisaggregatedTask handling {} regions from {} physical tables", tables_regions_info.regionCount(), tables_regions_info.tableCount());
 
+    if (context->isKeyspaceInBlacklist(meta.keyspace_id())
+        || context->isRegionsContainsInBlacklist(tables_regions_info.getAllRegionID()))
+    {
+        throw TiFlashException(Errors::Coprocessor::BadRequest, "disaggregated request disabled for keyspace or regions in keyspace", meta.keyspace_id());
+    }
+
     // set schema ver and start ts
     auto schema_ver = request->schema_ver();
     context->setSetting("schema_version", schema_ver);
