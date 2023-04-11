@@ -293,6 +293,16 @@ RegionMap RegionPersister::restore(PathPool & path_pool, const TiFlashRaftProxyH
             "region_id and page_id not match! region_id={} page_id={}",
             region->id(),
             page.page_id);
+        if (global_context.isKeyspaceInBlacklist(region->getKeyspaceID()))
+        {
+            LOG_WARNING(log, "Region {} skip restore because keyspace_id {} in blacklist", region->id(), region->getKeyspaceID());
+            return;
+        }
+        if (global_context.isRegionInBlacklist(region->id()))
+        {
+            LOG_WARNING(log, "Region {} skip restore because region_id {} in blacklist", region->id(), region->id());
+            return;
+        }
 
         regions.emplace(page.page_id, region);
     };
