@@ -136,7 +136,9 @@ Block SSTFilesToBlockInputStream::read()
         {
             BaseBuffView key = write_cf_reader->keyView();
             BaseBuffView value = write_cf_reader->valueView();
-            region->insert(ColumnFamilyType::Write, TiKVKey(key.data, key.len), TiKVValue(value.data, value.len));
+            TiKVKey tikv_key(key.data, key.len);
+            LOG_DEBUG(log, "load key from cf={} key={}", magic_enum::enum_name(ColumnFamilyType::Write), tikv_key.toDebugString());
+            region->insert(ColumnFamilyType::Write, std::move(tikv_key), TiKVValue(value.data, value.len));
             ++process_keys.write_cf;
             if (process_keys.write_cf % expected_size == 0)
             {
@@ -195,7 +197,9 @@ void SSTFilesToBlockInputStream::loadCFDataFromSST(ColumnFamilyType cf, const De
             BaseBuffView key = reader->keyView();
             BaseBuffView value = reader->valueView();
             // TODO: use doInsert to avoid locking
-            region->insert(cf, TiKVKey(key.data, key.len), TiKVValue(value.data, value.len), DupCheck::AllowSame);
+            TiKVKey tikv_key(key.data, key.len);
+            LOG_DEBUG(log, "load key from cf={} key={}", magic_enum::enum_name(cf), tikv_key.toDebugString());
+            region->insert(cf, std::move(tikv_key), TiKVValue(value.data, value.len), DupCheck::AllowSame);
             reader->next();
             (*p_process_keys) += 1;
         }
@@ -228,7 +232,9 @@ void SSTFilesToBlockInputStream::loadCFDataFromSST(ColumnFamilyType cf, const De
                 BaseBuffView key = reader->keyView();
                 BaseBuffView value = reader->valueView();
                 // TODO: use doInsert to avoid locking
-                region->insert(cf, TiKVKey(key.data, key.len), TiKVValue(value.data, value.len));
+                TiKVKey tikv_key(key.data, key.len);
+                LOG_DEBUG(log, "load key from cf={} key={}", magic_enum::enum_name(cf), tikv_key.toDebugString());
+                region->insert(cf, std::move(tikv_key), TiKVValue(value.data, value.len));
                 (*p_process_keys) += 1;
                 if (*p_process_keys == process_keys_offset_end)
                 {

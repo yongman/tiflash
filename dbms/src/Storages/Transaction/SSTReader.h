@@ -103,7 +103,7 @@ public:
                 // We don't drop if mono is the last instance for safety,
                 // and it will be dropped as MultiSSTReader is dropped.
                 // The `path` is serialized changeset under cse-proxy, don't print it to logging
-                // LOG_INFO(log, "Open sst file {}", buffToStrView(args[current].path));
+                LOG_INFO(log, "Open sst file, range={}", range->toDebugString());
                 mono = initer(proxy_helper, args[current], range);
             }
         }
@@ -120,7 +120,7 @@ public:
     {
         assert(args.size() > 0);
         // The `path` is serialized changeset under cse-proxy, don't print it to logging
-        // LOG_INFO(log, "Open sst file first {} range {}", buffToStrView(args[current].path), range->toDebugString());
+        LOG_INFO(log, "Open sst file first, range={}", range->toDebugString());
         mono = initer(proxy_helper, args[current], range);
     }
 
