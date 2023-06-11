@@ -20,6 +20,7 @@ namespace DB
 {
 bool MonoSSTReader::remained() const
 {
+    LOG_DEBUG(log, "MonoSSTReader remained, type: {}", type);
     auto remained = proxy_helper->sst_reader_interfaces.fn_remained(inner, type);
     if (!remained)
     {
@@ -39,6 +40,7 @@ bool MonoSSTReader::remained() const
 }
 BaseBuffView MonoSSTReader::keyView() const
 {
+    LOG_DEBUG(log, "MonoSSTReader keyView, type: {}", type);
     return proxy_helper->sst_reader_interfaces.fn_key(inner, type);
 }
 BaseBuffView MonoSSTReader::valueView() const
@@ -47,6 +49,7 @@ BaseBuffView MonoSSTReader::valueView() const
 }
 void MonoSSTReader::next()
 {
+    LOG_DEBUG(log, "MonoSSTReader next, type: {}", type);
     return proxy_helper->sst_reader_interfaces.fn_next(inner, type);
 }
 
@@ -57,6 +60,7 @@ MonoSSTReader::MonoSSTReader(const TiFlashRaftProxyHelper * proxy_helper_, SSTVi
     , range(range_)
 {
     log = &Poco::Logger::get("MonoSSTReader");
+    LOG_DEBUG(log, "MonoSSTReader created, inner: {}, type: {}", inner.inner, type);
     kind = proxy_helper->sst_reader_interfaces.fn_kind(inner, view.type);
     if (kind == SSTFormatKind::KIND_TABLET)
     {
