@@ -18,7 +18,7 @@ FROM hub.pingcap.net/tiflash/tiflash-llvm-base:multi-arch as builder
 COPY . /build/tics
 
 # build tiflash release
-RUN sh /build/tics/release-centos7-llvm/scripts/build-release.sh
+RUN sh /build/tics/release-centos7-llvm/scripts/build-debug.sh
 
 # package
 FROM hub.pingcap.net/tiflash/centos:7.9.2009-multi-arch
