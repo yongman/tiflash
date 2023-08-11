@@ -1404,7 +1404,7 @@ int Server::main(const std::vector<std::string> & /*args*/)
     global_context->setFormatSchemaPath(format_schema_path.path() + "/");
     format_schema_path.createDirectories();
 
-     /// Load keyspace blacklist json file
+    /// Load keyspace blacklist json file
     LOG_INFO(log, "Loading blacklist file.");
     auto blacklist_file_path = config().getString("blacklist_file", "");
     if (blacklist_file_path.length() == 0)

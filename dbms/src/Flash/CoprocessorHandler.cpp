@@ -97,7 +97,7 @@ grpc::Status CoprocessorHandler::execute()
             TablesRegionsInfo tables_regions_info(true);
             auto & table_regions_info = tables_regions_info.getSingleTableRegions();
 
-             if (cop_context.db_context.isKeyspaceInBlacklist(cop_request->context().keyspace_id())
+            if (cop_context.db_context.isKeyspaceInBlacklist(cop_request->context().keyspace_id())
                 || cop_context.db_context.isRegionInBlacklist(cop_context.kv_context.region_id()))
             {
                 LOG_DEBUG(

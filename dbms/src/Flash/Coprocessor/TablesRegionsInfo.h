@@ -80,7 +80,7 @@ public:
     }
 
     std::vector<RegionID> getAllRegionID();
-    
+
     UInt64 tableCount() const
     {
         return table_regions_info_map.size();

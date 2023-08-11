@@ -111,7 +111,7 @@ void loadMetadata(Context & context)
         // Ignore "system" database.
         if (db_name == SYSTEM_DATABASE)
             continue;
-            
+
         // Ignore database owned by keyspace in blacklist
         auto keyspace_id = SchemaNameMapper::getMappedNameKeyspaceID(db_name);
         if (context.isKeyspaceInBlacklist(keyspace_id))
