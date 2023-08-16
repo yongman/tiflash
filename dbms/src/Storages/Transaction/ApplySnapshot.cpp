@@ -366,7 +366,7 @@ std::vector<DM::ExternalDTFileInfo> KVStore::preHandleSSTsToDTFiles(
                                                                        context.getSettingsRef().safe_point_update_interval_seconds);
             }
             physical_table_id = storage->getTableInfo().id;
-            auto log_prefix = fmt::format("table_id={}", physical_table_id);
+            auto log_prefix = fmt::format("keyspace={} table_id={}", keyspace_id, physical_table_id);
 
             auto & global_settings = context.getGlobalContext().getSettingsRef();
 
