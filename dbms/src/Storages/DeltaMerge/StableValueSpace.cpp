@@ -519,6 +519,7 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::getInputStream(
     UInt64 max_data_version,
     size_t expected_block_size,
     bool enable_handle_clean_read,
+    ReadTag read_tag,
     bool is_fast_scan,
     bool enable_del_clean_read,
     const std::vector<IdSetPtr> & read_packs,
@@ -547,6 +548,7 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::getInputStream(
             .setColumnCache(column_caches[i])
             .setTracingID(context.tracing_id)
             .setRowsThreshold(expected_block_size)
+<<<<<<< HEAD
             .setReadPacks(read_packs.size() > i ? read_packs[i] : nullptr);
         if (bitmap_filter)
         {
@@ -556,6 +558,11 @@ SkippableBlockInputStreamPtr StableValueSpace::Snapshot::getInputStream(
         }
 
         streams.push_back(builder.build2(stable->files[i], read_columns, rowkey_ranges, context.scan_context));
+=======
+            .setReadPacks(read_packs.size() > i ? read_packs[i] : nullptr)
+            .setReadTag(read_tag);
+        streams.push_back(builder.build(stable->files[i], read_columns, rowkey_ranges, context.scan_context));
+>>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
         rows.push_back(stable->files[i]->getRows());
     }
     if (need_row_id)

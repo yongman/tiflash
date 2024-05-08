@@ -174,6 +174,12 @@ public:
         return *this;
     }
 
+    DMFileBlockInputStreamBuilder & setReadTag(ReadTag read_tag_)
+    {
+        read_tag = read_tag_;
+        return *this;
+    }
+
 private:
     // These methods are called by the ctor
 
@@ -221,10 +227,14 @@ private:
     bool read_one_pack_every_time = false;
     size_t max_sharing_column_bytes_for_all = 0;
     String tracing_id;
+<<<<<<< HEAD
 
     VectorIndexCachePtr vector_index_cache;
     // Note: Currently thie field is assigned only for Stable streams, not available for ColumnFileBig
     std::optional<BitmapFilterView> bitmap_filter;
+=======
+    ReadTag read_tag = ReadTag::Internal;
+>>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
 };
 
 /**
