@@ -1,4 +1,4 @@
-name: CICD
+name: CD
 
 on:
   workflow_dispatch:
@@ -94,9 +94,9 @@ jobs:
         run: |
           # Remove the local manifest entry if it exists
           docker manifest rm hub.pingcap.net/keyspace/tiflash:v7.5.0 || true
-          
+
           docker manifest create hub.pingcap.net/keyspace/tiflash:v7.5.0 \
           --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-amd64 \
           --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
-          
+
           docker manifest push hub.pingcap.net/keyspace/tiflash:v7.5.0
