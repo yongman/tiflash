@@ -609,6 +609,7 @@ void MPPTask::runImpl()
             // finish receiver
             receiver_set->close();
         }
+
         result.verify();
     }
     catch (...)

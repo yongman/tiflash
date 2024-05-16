@@ -106,13 +106,6 @@ public:
 
     void deserialize(const tipb::TiFlashScanContext & tiflash_scan_context_pb)
     {
-<<<<<<< HEAD
-        total_dmfile_scanned_packs = tiflash_scan_context_pb.dmfile_scanned_packs();
-        total_dmfile_skipped_packs = tiflash_scan_context_pb.dmfile_skipped_packs();
-        total_dmfile_scanned_rows = tiflash_scan_context_pb.dmfile_data_scanned_rows();
-        total_dmfile_skipped_rows = tiflash_scan_context_pb.dmfile_data_skipped_rows();
-        total_dmfile_rough_set_index_check_time_ns = tiflash_scan_context_pb.total_dmfile_rs_load_ms() * 1000000;
-=======
         dmfile_data_scanned_rows = tiflash_scan_context_pb.dmfile_data_scanned_rows();
         dmfile_data_skipped_rows = tiflash_scan_context_pb.dmfile_data_skipped_rows();
         dmfile_mvcc_scanned_rows = tiflash_scan_context_pb.dmfile_mvcc_scanned_rows();
@@ -120,7 +113,6 @@ public:
         dmfile_lm_filter_scanned_rows = tiflash_scan_context_pb.dmfile_lm_filter_scanned_rows();
         dmfile_lm_filter_skipped_rows = tiflash_scan_context_pb.dmfile_lm_filter_skipped_rows();
         total_dmfile_rough_set_index_check_time_ns = tiflash_scan_context_pb.total_dmfile_rs_check_ms() * 1000000;
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
         total_dmfile_read_time_ns = tiflash_scan_context_pb.total_dmfile_read_ms() * 1000000;
         create_snapshot_time_ns = tiflash_scan_context_pb.total_build_snapshot_ms() * 1000000;
         total_remote_region_num = tiflash_scan_context_pb.remote_regions();
@@ -130,17 +122,6 @@ public:
         disagg_read_cache_hit_size = tiflash_scan_context_pb.disagg_read_cache_hit_bytes();
         disagg_read_cache_miss_size = tiflash_scan_context_pb.disagg_read_cache_miss_bytes();
 
-<<<<<<< HEAD
-        total_vector_idx_load_from_s3 = tiflash_scan_context_pb.total_vector_idx_load_from_s3();
-        total_vector_idx_load_from_disk = tiflash_scan_context_pb.total_vector_idx_load_from_disk();
-        total_vector_idx_load_from_cache = tiflash_scan_context_pb.total_vector_idx_load_from_cache();
-        total_vector_idx_load_time_ms = tiflash_scan_context_pb.total_vector_idx_load_time_ms();
-        total_vector_idx_search_time_ms = tiflash_scan_context_pb.total_vector_idx_search_time_ms();
-        total_vector_idx_search_visited_nodes = tiflash_scan_context_pb.total_vector_idx_search_visited_nodes();
-        total_vector_idx_search_discarded_nodes = tiflash_scan_context_pb.total_vector_idx_search_discarded_nodes();
-        total_vector_idx_read_vec_time_ms = tiflash_scan_context_pb.total_vector_idx_read_vec_time_ms();
-        total_vector_idx_read_others_time_ms = tiflash_scan_context_pb.total_vector_idx_read_others_time_ms();
-=======
         num_segments = tiflash_scan_context_pb.segments();
         num_read_tasks = tiflash_scan_context_pb.read_tasks();
 
@@ -162,19 +143,11 @@ public:
             tiflash_scan_context_pb.max_remote_stream_ms() * 1000000);
 
         deserializeRegionNumberOfInstance(tiflash_scan_context_pb);
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
     }
 
     tipb::TiFlashScanContext serialize()
     {
         tipb::TiFlashScanContext tiflash_scan_context_pb{};
-<<<<<<< HEAD
-        tiflash_scan_context_pb.set_dmfile_scanned_packs(total_dmfile_scanned_packs);
-        tiflash_scan_context_pb.set_dmfile_skipped_packs(total_dmfile_skipped_packs);
-        tiflash_scan_context_pb.set_dmfile_data_scanned_rows(total_dmfile_scanned_rows);
-        tiflash_scan_context_pb.set_dmfile_data_skipped_rows(total_dmfile_skipped_rows);
-        tiflash_scan_context_pb.set_total_dmfile_rs_load_ms(total_dmfile_rough_set_index_check_time_ns / 1000000);
-=======
         tiflash_scan_context_pb.set_dmfile_data_scanned_rows(dmfile_data_scanned_rows);
         tiflash_scan_context_pb.set_dmfile_data_skipped_rows(dmfile_data_skipped_rows);
         tiflash_scan_context_pb.set_dmfile_mvcc_scanned_rows(dmfile_mvcc_scanned_rows);
@@ -182,7 +155,6 @@ public:
         tiflash_scan_context_pb.set_dmfile_lm_filter_scanned_rows(dmfile_lm_filter_scanned_rows);
         tiflash_scan_context_pb.set_dmfile_lm_filter_skipped_rows(dmfile_lm_filter_skipped_rows);
         tiflash_scan_context_pb.set_total_dmfile_rs_check_ms(total_dmfile_rough_set_index_check_time_ns / 1000000);
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
         tiflash_scan_context_pb.set_total_dmfile_read_ms(total_dmfile_read_time_ns / 1000000);
         tiflash_scan_context_pb.set_total_build_snapshot_ms(create_snapshot_time_ns / 1000000);
         tiflash_scan_context_pb.set_remote_regions(total_remote_region_num);
@@ -192,17 +164,6 @@ public:
         tiflash_scan_context_pb.set_disagg_read_cache_hit_bytes(disagg_read_cache_hit_size);
         tiflash_scan_context_pb.set_disagg_read_cache_miss_bytes(disagg_read_cache_miss_size);
 
-<<<<<<< HEAD
-        tiflash_scan_context_pb.set_total_vector_idx_load_from_s3(total_vector_idx_load_from_s3);
-        tiflash_scan_context_pb.set_total_vector_idx_load_from_disk(total_vector_idx_load_from_disk);
-        tiflash_scan_context_pb.set_total_vector_idx_load_from_cache(total_vector_idx_load_from_cache);
-        tiflash_scan_context_pb.set_total_vector_idx_load_time_ms(total_vector_idx_load_time_ms);
-        tiflash_scan_context_pb.set_total_vector_idx_search_time_ms(total_vector_idx_search_time_ms);
-        tiflash_scan_context_pb.set_total_vector_idx_search_visited_nodes(total_vector_idx_search_visited_nodes);
-        tiflash_scan_context_pb.set_total_vector_idx_search_discarded_nodes(total_vector_idx_search_discarded_nodes);
-        tiflash_scan_context_pb.set_total_vector_idx_read_vec_time_ms(total_vector_idx_read_vec_time_ms);
-        tiflash_scan_context_pb.set_total_vector_idx_read_others_time_ms(total_vector_idx_read_others_time_ms);
-=======
         tiflash_scan_context_pb.set_segments(num_segments);
         tiflash_scan_context_pb.set_read_tasks(num_read_tasks);
 
@@ -223,7 +184,6 @@ public:
         tiflash_scan_context_pb.set_max_remote_stream_ms(remote_max_stream_cost_ns / 1000000);
 
         serializeRegionNumOfInstance(tiflash_scan_context_pb);
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
 
         return tiflash_scan_context_pb;
     }
@@ -255,18 +215,7 @@ public:
         mvcc_input_rows += other.mvcc_input_rows;
         mvcc_input_bytes += other.mvcc_input_bytes;
         mvcc_output_rows += other.mvcc_output_rows;
-<<<<<<< HEAD
 
-        total_vector_idx_load_from_s3 += other.total_vector_idx_load_from_s3;
-        total_vector_idx_load_from_disk += other.total_vector_idx_load_from_disk;
-        total_vector_idx_load_from_cache += other.total_vector_idx_load_from_cache;
-        total_vector_idx_load_time_ms += other.total_vector_idx_load_time_ms;
-        total_vector_idx_search_time_ms += other.total_vector_idx_search_time_ms;
-        total_vector_idx_search_visited_nodes += other.total_vector_idx_search_visited_nodes;
-        total_vector_idx_search_discarded_nodes += other.total_vector_idx_search_discarded_nodes;
-        total_vector_idx_read_vec_time_ms += other.total_vector_idx_read_vec_time_ms;
-        total_vector_idx_read_others_time_ms += other.total_vector_idx_read_others_time_ms;
-=======
         late_materialization_skip_rows += other.late_materialization_skip_rows;
 
         learner_read_ns += other.learner_read_ns;
@@ -283,22 +232,10 @@ public:
             other.remote_max_stream_cost_ns);
 
         mergeRegionNumberOfInstance(other);
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
     }
 
     void merge(const tipb::TiFlashScanContext & other)
     {
-<<<<<<< HEAD
-        total_dmfile_scanned_packs += other.dmfile_scanned_packs();
-        total_dmfile_skipped_packs += other.dmfile_skipped_packs();
-        total_dmfile_scanned_rows += other.dmfile_data_scanned_rows();
-        total_dmfile_skipped_rows += other.dmfile_data_skipped_rows();
-        total_dmfile_rough_set_index_check_time_ns += other.total_dmfile_rs_load_ms() * 1000000;
-        total_dmfile_read_time_ns += other.total_dmfile_read_ms() * 1000000;
-        create_snapshot_time_ns += other.total_build_snapshot_ms() * 1000000;
-        total_local_region_num += other.remote_regions();
-        total_remote_region_num += other.local_regions();
-=======
         dmfile_data_scanned_rows += other.dmfile_data_scanned_rows();
         dmfile_data_skipped_rows += other.dmfile_data_skipped_rows();
         dmfile_mvcc_scanned_rows += other.dmfile_mvcc_scanned_rows();
@@ -310,23 +247,11 @@ public:
         create_snapshot_time_ns += other.total_build_snapshot_ms() * 1000000;
         total_local_region_num += other.local_regions();
         total_remote_region_num += other.remote_regions();
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
         user_read_bytes += other.user_read_bytes();
         learner_read_ns += other.total_learner_read_ms() * 1000000;
         disagg_read_cache_hit_size += other.disagg_read_cache_hit_bytes();
         disagg_read_cache_miss_size += other.disagg_read_cache_miss_bytes();
 
-<<<<<<< HEAD
-        total_vector_idx_load_from_s3 += other.total_vector_idx_load_from_s3();
-        total_vector_idx_load_from_disk += other.total_vector_idx_load_from_disk();
-        total_vector_idx_load_from_cache += other.total_vector_idx_load_from_cache();
-        total_vector_idx_load_time_ms += other.total_vector_idx_load_time_ms();
-        total_vector_idx_search_time_ms += other.total_vector_idx_search_time_ms();
-        total_vector_idx_search_visited_nodes += other.total_vector_idx_search_visited_nodes();
-        total_vector_idx_search_discarded_nodes += other.total_vector_idx_search_discarded_nodes();
-        total_vector_idx_read_vec_time_ms += other.total_vector_idx_read_vec_time_ms();
-        total_vector_idx_read_others_time_ms += other.total_vector_idx_read_others_time_ms();
-=======
         num_segments += other.segments();
         num_read_tasks += other.read_tasks();
 
@@ -348,7 +273,6 @@ public:
             other.max_remote_stream_ms() * 1000000);
 
         mergeRegionNumberOfInstance(other);
->>>>>>> a26283902 (Storages: Add statistical data of TableScanning in ScanContext (release-7.5) (#8900))
     }
 
     String toJson() const;
