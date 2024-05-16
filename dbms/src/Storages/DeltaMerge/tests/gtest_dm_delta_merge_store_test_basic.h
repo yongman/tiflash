@@ -142,6 +142,7 @@ public:
     {
         TiFlashStorageTestBasic::SetUp();
         store = reload();
+        dm_context = store->newDMContext(*db_context, db_context->getSettingsRef());
     }
 
     DeltaMergeStorePtr reload(
@@ -205,8 +206,11 @@ protected:
     TestMode mode;
     DeltaMergeStorePtr store;
     const StorageFormatVersion current_version;
+    DMContextPtr dm_context;
 
     constexpr static const char * TRACING_NAME = "DeltaMergeStoreRWTest";
+
+    void dupHandleVersionAndDeltaIndexAdvancedThanSnapshot();
 };
 } // namespace tests
 } // namespace DM
