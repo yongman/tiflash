@@ -1069,9 +1069,17 @@ public:
 
     void addReplicaSyncRU(UInt32 keyspace_id, UInt64 ru);
     UInt64 debugQueryReplicaSyncRU(UInt32 keyspace_id);
-    void setProxyThreadMemory(const std::string & k, Int64 v);
-    double getProxyThreadMemory(const std::string & k);
+    enum class MemoryAllocType
+    {
+        Alloc = 1,
+        Dealloc = 2,
+    };
+    void setProxyThreadMemory(MemoryAllocType type, const std::string & k, Int64 v);
+    double getProxyThreadMemory(MemoryAllocType type, const std::string & k);
+    void setStorageThreadMemory(MemoryAllocType type, const std::string & k, Int64 v);
+    double getStorageThreadMemory(MemoryAllocType type, const std::string & k);
     void registerProxyThreadMemory(const std::string & k);
+    void registerStorageThreadMemory(const std::string & k);
 
     void setProvideProxyProcessMetrics(bool v);
 
@@ -1085,6 +1093,7 @@ private:
     static constexpr auto current_metrics_prefix = "tiflash_system_current_metric_";
     static constexpr auto async_metrics_prefix = "tiflash_system_asynchronous_metric_";
     static constexpr auto raft_proxy_thread_memory_usage = "tiflash_raft_proxy_thread_memory_usage";
+    static constexpr auto storages_thread_memory_usage = "storages_thread_memory_usage";
 
     std::shared_ptr<prometheus::Registry> registry = std::make_shared<prometheus::Registry>();
     std::shared_ptr<ProcessCollector> process_collector;
@@ -1106,6 +1115,10 @@ private:
     prometheus::Family<prometheus::Gauge> * registered_raft_proxy_thread_memory_usage_family;
     std::shared_mutex proxy_thread_report_mtx;
     std::unordered_map<std::string, prometheus::Gauge *> registered_raft_proxy_thread_memory_usage_metrics;
+
+    prometheus::Family<prometheus::Gauge> * registered_storage_thread_memory_usage_family;
+    std::shared_mutex storage_thread_report_mtx;
+    std::unordered_map<std::string, prometheus::Gauge *> registered_storage_thread_memory_usage_metrics;
 
 public:
 #define MAKE_METRIC_MEMBER_M(family_name, help, type, ...) \

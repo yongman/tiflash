@@ -38,6 +38,11 @@ public:
     }
 
     static void dropTable(Context & ctx, TableID table_id);
+
+    static void recordThreadAllocInfoForProxy(const JointThreadInfoJeallocMapPtr & m)
+    {
+        m->recordThreadAllocInfoForProxy();
+    }
 };
 
 static inline void validateSSTGeneration(

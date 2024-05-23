@@ -670,8 +670,8 @@ DM::WriteResult DeltaMergeStore::write(const Context & db_context, const DB::Set
                 ErrorCodes::FAIL_POINT_ERROR);
     });
 
-    // TODO: Update the tracing_id before checkSegmentsUpdateForKVStore
-    return checkSegmentsUpdateForKVStore(
+    // TODO: Update the tracing_id before checkSegmentsUpdateForProxy
+    return checkSegmentsUpdateForProxy(
         dm_context,
         updated_segments.begin(),
         updated_segments.end(),
