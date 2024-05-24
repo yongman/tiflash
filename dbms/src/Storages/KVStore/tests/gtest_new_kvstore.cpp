@@ -989,4 +989,11 @@ try
 }
 CATCH
 
+TEST(ProxyMode, Normal)
+try
+{
+    ASSERT_EQ(SERVERLESS_PROXY, 1);
+}
+CATCH
+
 } // namespace DB::tests
