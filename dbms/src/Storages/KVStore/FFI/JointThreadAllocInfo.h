@@ -15,6 +15,7 @@
 #pragma once
 
 #include <shared_mutex>
+#include <thread>
 #include <unordered_map>
 
 namespace DB
