@@ -85,7 +85,7 @@ void MockFFIImpls::fn_handle_batch_read_index(
     throw Exception("`fn_handle_batch_read_index` is deprecated");
 }
 
-kvrpcpb::ReadIndexRequest make_read_index_reqs(uint64_t region_id, uint64_t start_ts)
+kvrpcpb::ReadIndexRequest MockFFIImpls::make_read_index_reqs(uint64_t region_id, uint64_t start_ts)
 {
     kvrpcpb::ReadIndexRequest req;
     req.set_start_ts(start_ts);

@@ -25,8 +25,6 @@
 
 namespace DB
 {
-kvrpcpb::ReadIndexRequest make_read_index_reqs(uint64_t region_id, uint64_t start_ts);
-
 struct MockProxyRegion : MutexLockWrap
 {
     raft_serverpb::RegionLocalState getState();
@@ -278,6 +276,9 @@ struct MockRaftStoreProxy : MutexLockWrap
         , table_id(1)
         , cluster_ver(RaftstoreVer::V1)
     {
+        log = Logger::get("MockRaftStoreProxy");
+        table_id = 1;
+        cluster_ver = RaftstoreVer::V1;
         proxy_config_string = R"({"raftstore":{"snap-handle-pool-size":4}})";
     }
 

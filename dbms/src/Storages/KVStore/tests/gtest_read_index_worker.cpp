@@ -14,6 +14,7 @@
 
 #include <Common/FailPoint.h>
 #include <Common/setThreadName.h>
+#include <Debug/MockKVStore/MockFFIImpls.h>
 #include <Debug/MockKVStore/MockRaftStoreProxy.h>
 #include <TestUtils/TiFlashTestBasic.h>
 #include <fmt/chrono.h>
@@ -61,7 +62,10 @@ void ReadIndexTest::testError()
         std::vector<kvrpcpb::ReadIndexResponse> resps;
         std::list<ReadIndexFuturePtr> futures;
         {
-            reqs = {make_read_index_reqs(2, 10), make_read_index_reqs(2, 12), make_read_index_reqs(2, 13)};
+            reqs
+                = {MockFFIImpls::make_read_index_reqs(2, 10),
+                   MockFFIImpls::make_read_index_reqs(2, 12),
+                   MockFFIImpls::make_read_index_reqs(2, 13)};
             for (const auto & req : reqs)
             {
                 auto future = manager->genReadIndexFuture(req);
@@ -105,7 +109,10 @@ void ReadIndexTest::testError()
         }
 
         {
-            reqs = {make_read_index_reqs(2, 10), make_read_index_reqs(2, 12), make_read_index_reqs(2, 13)};
+            reqs
+                = {MockFFIImpls::make_read_index_reqs(2, 10),
+                   MockFFIImpls::make_read_index_reqs(2, 12),
+                   MockFFIImpls::make_read_index_reqs(2, 13)};
             for (const auto & req : reqs)
             {
                 auto future = manager->genReadIndexFuture(req);
@@ -153,8 +160,8 @@ void ReadIndexTest::testError()
             std::vector<kvrpcpb::ReadIndexResponse> resps;
             std::list<ReadIndexFuturePtr> futures;
             reqs = {
-                make_read_index_reqs(2, 12),
-                make_read_index_reqs(2, 13),
+                MockFFIImpls::make_read_index_reqs(2, 12),
+                MockFFIImpls::make_read_index_reqs(2, 13),
             };
             futures.clear();
             for (const auto & req : reqs)
@@ -166,7 +173,7 @@ void ReadIndexTest::testError()
             }
             manager->runOneRoundAll();
             proxy_instance.mock_read_index.runOneRound();
-            auto future = manager->genReadIndexFuture(make_read_index_reqs(2, 15));
+            auto future = manager->genReadIndexFuture(MockFFIImpls::make_read_index_reqs(2, 15));
 
             // drop region 2
             manager->getWorkerByRegion(2).removeRegion(2);
@@ -297,7 +304,7 @@ void ReadIndexTest::testNormal()
             reqs.reserve(proxy_instance.size());
             for (size_t i = 0; i < proxy_instance.size(); ++i)
             {
-                reqs.emplace_back(make_read_index_reqs(i, 10));
+                reqs.emplace_back(MockFFIImpls::make_read_index_reqs(i, 10));
             }
         }
         {
@@ -339,7 +346,7 @@ void ReadIndexTest::testNormal()
         }
         {
             // bigger ts, fetch latest commit index
-            reqs = {make_read_index_reqs(0, 11)};
+            reqs = {MockFFIImpls::make_read_index_reqs(0, 11)};
             auto resps = manager->batchReadIndex(reqs);
             ASSERT_EQ(resps[0].first.read_index(), 668);
             ASSERT_EQ(computeCntUseHistoryTasks(*manager), expect_cnt_use_history_tasks);
@@ -351,7 +358,7 @@ void ReadIndexTest::testNormal()
             }
         }
         {
-            reqs = {make_read_index_reqs(0, 0)};
+            reqs = {MockFFIImpls::make_read_index_reqs(0, 0)};
             auto resps = manager->batchReadIndex(reqs);
             ASSERT_EQ(resps[0].first.read_index(), 669); // tso 0 will not use history record
             ASSERT_EQ(computeCntUseHistoryTasks(*manager), expect_cnt_use_history_tasks);
@@ -359,7 +366,7 @@ void ReadIndexTest::testNormal()
         {
             // smaller ts, use history success record.
             expect_cnt_use_history_tasks++;
-            reqs = {make_read_index_reqs(0, 9)};
+            reqs = {MockFFIImpls::make_read_index_reqs(0, 9)};
             auto resps = manager->batchReadIndex(reqs);
             ASSERT_EQ(resps[0].first.read_index(), 668); // history record has been updated
             ASSERT_EQ(computeCntUseHistoryTasks(*manager), expect_cnt_use_history_tasks);
@@ -370,7 +377,10 @@ void ReadIndexTest::testNormal()
                 [](MockRaftStoreProxy & proxy) { proxy.mock_read_index.region_id_to_drop.emplace(1); });
             std::vector<kvrpcpb::ReadIndexRequest> reqs;
 
-            reqs = {make_read_index_reqs(5, 12), make_read_index_reqs(1, 12), make_read_index_reqs(2, 12)};
+            reqs
+                = {MockFFIImpls::make_read_index_reqs(5, 12),
+                   MockFFIImpls::make_read_index_reqs(1, 12),
+                   MockFFIImpls::make_read_index_reqs(2, 12)};
             auto start = std::chrono::steady_clock::now();
             auto resps = manager->batchReadIndex(reqs, 20);
             auto time_cost = std::chrono::steady_clock::now() - start;
@@ -383,7 +393,7 @@ void ReadIndexTest::testNormal()
                 // test timeout 0ms
                 proxy_instance.unsafeInvokeForTest(
                     [](MockRaftStoreProxy & proxy) { proxy.mock_read_index.region_id_to_drop.emplace(9); });
-                auto resps = manager->batchReadIndex({make_read_index_reqs(9, 12)}, 0);
+                auto resps = manager->batchReadIndex({MockFFIImpls::make_read_index_reqs(9, 12)}, 0);
                 ASSERT_EQ(
                     resps[0].first.region_error().has_region_not_found(),
                     true); // timeout to region error not found
@@ -411,7 +421,10 @@ void ReadIndexTest::testNormal()
             // test `batchReadIndex_v2`.
             // batchReadIndex_v2 is almost like v1.
             // v1 runs all jobs in proxy. v2 split into multi steps and runs them in tiflash side.
-            reqs = {make_read_index_reqs(5, 12), make_read_index_reqs(1, 12), make_read_index_reqs(2, 12)};
+            reqs
+                = {MockFFIImpls::make_read_index_reqs(5, 12),
+                   MockFFIImpls::make_read_index_reqs(1, 12),
+                   MockFFIImpls::make_read_index_reqs(2, 12)};
             auto resps = proxy_helper.batchReadIndex_v2(reqs, 200);
             for (size_t i = 0; i < reqs.size(); ++i)
             {
@@ -433,7 +446,7 @@ void ReadIndexTest::testNormal()
         }
         {
             // test region not exists
-            reqs = {make_read_index_reqs(8192, 5)};
+            reqs = {MockFFIImpls::make_read_index_reqs(8192, 5)};
             auto resps = proxy_helper.batchReadIndex_v2(reqs, 20);
             ASSERT(resps[0].first.has_region_error());
         }
@@ -478,11 +491,11 @@ void ReadIndexTest::testBatch()
         std::vector<kvrpcpb::ReadIndexRequest> reqs;
         std::deque<ReadIndexFuturePtr> futures;
         reqs
-            = {make_read_index_reqs(0, 1),
-               make_read_index_reqs(0, 2),
-               make_read_index_reqs(0, 3),
-               make_read_index_reqs(1, 2),
-               make_read_index_reqs(1, 3)};
+            = {MockFFIImpls::make_read_index_reqs(0, 1),
+               MockFFIImpls::make_read_index_reqs(0, 2),
+               MockFFIImpls::make_read_index_reqs(0, 3),
+               MockFFIImpls::make_read_index_reqs(1, 2),
+               MockFFIImpls::make_read_index_reqs(1, 3)};
         // no waiting task
         ASSERT_EQ(manager->getWorkerByRegion(0).data_map.getDataNode(0)->waiting_tasks.size(), 0);
         // poll failed
@@ -515,7 +528,7 @@ void ReadIndexTest::testBatch()
             }
         }
         {
-            auto req = make_read_index_reqs(0, 5);
+            auto req = MockFFIImpls::make_read_index_reqs(0, 5);
             auto future = manager->genReadIndexFuture(req);
             ASSERT_FALSE(future->poll());
             futures.emplace_back(future);
@@ -545,7 +558,7 @@ void ReadIndexTest::testBatch()
             ASSERT_EQ(resp.read_index(), 667);
     }
     {
-        auto req = make_read_index_reqs(8192, 5); // not exist
+        auto req = MockFFIImpls::make_read_index_reqs(8192, 5); // not exist
 
         auto future = manager->genReadIndexFuture(req);
 
@@ -570,7 +583,7 @@ void ReadIndexTest::testBatch()
         std::list<ReadIndexFuturePtr> futures;
         std::vector<kvrpcpb::ReadIndexResponse> resps;
 
-        reqs = {make_read_index_reqs(0, 5), make_read_index_reqs(0, 6)};
+        reqs = {MockFFIImpls::make_read_index_reqs(0, 5), MockFFIImpls::make_read_index_reqs(0, 6)};
         for (const auto & req : reqs)
         {
             auto future = manager->genReadIndexFuture(req);
@@ -581,7 +594,7 @@ void ReadIndexTest::testBatch()
         ASSERT_EQ(1, manager->getWorkerByRegion(0).data_map.getDataNode(0)->running_tasks.size());
 
         {
-            auto future = manager->genReadIndexFuture(make_read_index_reqs(0, 10));
+            auto future = manager->genReadIndexFuture(MockFFIImpls::make_read_index_reqs(0, 10));
             futures.push_back(future);
         }
         manager->runOneRoundAll();
@@ -613,7 +626,7 @@ void ReadIndexTest::testBatch()
 
         futures.clear();
         reqs = {
-            make_read_index_reqs(0, 12),
+            MockFFIImpls::make_read_index_reqs(0, 12),
         };
         for (const auto & req : reqs)
         {
@@ -636,7 +649,7 @@ void ReadIndexTest::testBatch()
     {
         MockStressTestCfg::enable = true;
         auto region_id = 1 + MockStressTestCfg::RegionIdPrefix * (1 + 1);
-        auto f = manager->genReadIndexFuture(make_read_index_reqs(region_id, 15));
+        auto f = manager->genReadIndexFuture(MockFFIImpls::make_read_index_reqs(region_id, 15));
         manager->runOneRoundAll();
         proxy_instance.regions[1]->updateCommitIndex(677);
         proxy_instance.mock_read_index.runOneRound();

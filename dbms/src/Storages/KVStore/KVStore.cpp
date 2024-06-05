@@ -114,7 +114,13 @@ void KVStore::restore(PathPool & path_pool, const TiFlashRaftProxyHelper * proxy
         }
     }
 
+    fetchProxyConfig(proxy_helper);
+}
+
+void KVStore::fetchProxyConfig(const TiFlashRaftProxyHelper * proxy_helper)
+{
     // Try fetch proxy's config as a json string
+    UNUSED(proxy_helper); // serverless proxy not support
     // if (proxy_helper && proxy_helper->fn_get_config_json)
     // {
     //     RustStrWithView rust_string

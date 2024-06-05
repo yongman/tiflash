@@ -25,6 +25,7 @@
 #include <Storages/KVStore/MultiRaft/RegionRangeKeys.h>
 #include <Storages/KVStore/StorageEngineType.h>
 
+#include <condition_variable>
 #include <magic_enum.hpp>
 
 namespace TiDB
@@ -262,6 +263,8 @@ public: // Region Management
 
     RaftLogEagerGcTasks::Hints getRaftLogGcHints();
     void applyRaftLogGcTaskRes(const RaftLogGcTasksRes & res) const;
+    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
+    size_t getMaxParallelPrehandleSize() const;
 
 #ifndef DBMS_PUBLIC_GTEST
 private:
@@ -375,7 +378,6 @@ private:
     void releaseReadIndexWorkers();
     void handleDestroy(UInt64 region_id, TMTContext & tmt, const KVStoreTaskLock &);
     void fetchProxyConfig(const TiFlashRaftProxyHelper * proxy_helper);
-    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
 
 #ifndef DBMS_PUBLIC_GTEST
 private:

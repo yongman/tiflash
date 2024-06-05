@@ -44,6 +44,25 @@ extern void setupPutRequest(raft_cmdpb::Request *, const std::string &, const Ti
 extern void setupDelRequest(raft_cmdpb::Request *, const std::string &, const TiKVKey &);
 } // namespace RegionBench
 
+void fn_notify_compact_log(
+    RaftStoreProxyPtr ptr,
+    uint64_t region_id,
+    uint64_t compact_index,
+    uint64_t compact_term,
+    uint64_t applied_index)
+{
+    UNUSED(applied_index);
+    // Update flushed applied_index and truncated state.
+    auto & x = as_ref(ptr);
+    auto region = x.getRegion(region_id);
+    ASSERT(region);
+    // `applied_index` in proxy's disk can still be less than the `applied_index` here when fg flush.
+    if (region && region->getApply().truncated_state().index() < compact_index)
+    {
+        region->tryUpdateTruncatedState(compact_index, compact_term);
+    }
+}
+
 TiFlashRaftProxyHelper MockRaftStoreProxy::SetRaftStoreProxyFFIHelper(RaftStoreProxyPtr proxy_ptr)
 {
     TiFlashRaftProxyHelper res{};
@@ -603,7 +622,7 @@ std::tuple<RegionPtr, PrehandleResult> MockRaftStoreProxy::snapshot(
         region_id,
         std::move(cfs),
         old_kv_region->cloneMetaRegion(),
-        old_kv_region->mutMeta().peerId(),
+        old_kv_region->getMeta().peerId(),
         index,
         term,
         deadline_index,
@@ -670,6 +689,7 @@ std::tuple<RegionPtr, PrehandleResult> MockRaftStoreProxy::snapshot(
     LOG_FATAL(DB::Logger::get(), "Should not happen");
     exit(-1);
 }
+
 
 TableID MockRaftStoreProxy::bootstrapTable(Context & ctx, KVStore & kvs, TMTContext & tmt, bool drop_at_first)
 {
