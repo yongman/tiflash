@@ -447,7 +447,7 @@ private:
             size_t count = 0;
             for (const auto & [version, entry_or_del] : versioned_entries->entries)
             {
-                const auto & entry = entry_or_del.entry;
+                const auto & entry = entry_or_del.entry.value();
                 page_str.fmtAppend(
                     "      entry {}\n"
                     "       sequence: {}\n"
@@ -678,7 +678,7 @@ private:
             {
                 if (entry_or_del.isEntry() && it->second->type == EditRecordType::VAR_ENTRY)
                 {
-                    const PageEntryV3 & entry = entry_or_del.entry;
+                    const PageEntryV3 & entry = entry_or_del.entry.value();
                     if (entry.checkpoint_info.has_value() && entry.checkpoint_info.is_local_data_reclaimed)
                     {
                         error_msg.fmtAppend("  page {} version {} local data is reclaimed\n", full_page_id, version);
@@ -770,7 +770,7 @@ private:
                     try
                     {
                         PageIdAndEntry to_read_entry;
-                        const PageEntryV3 & entry = entry_or_del.entry;
+                        const PageEntryV3 & entry = entry_or_del.entry.value();
                         PageIdAndEntries to_read;
                         to_read_entry.first = internal_id;
                         to_read_entry.second = entry;

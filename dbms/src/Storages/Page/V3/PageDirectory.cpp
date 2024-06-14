@@ -329,7 +329,7 @@ bool VersionedPageEntries<Trait>::updateLocalCacheForRemotePage(const PageVersio
     {
         auto last_iter = MapUtils::findMutLess(entries, PageVersion(ver.sequence + 1, 0));
         RUNTIME_CHECK_MSG(last_iter != entries.end() && last_iter->second.isEntry(), "{}", toDebugString());
-        auto & ori_entry = last_iter->second.entry;
+        auto & ori_entry = last_iter->second.entry.value();
         RUNTIME_CHECK_MSG(ori_entry.checkpoint_info.has_value(), "{}", toDebugString());
         if (!ori_entry.checkpoint_info.is_local_data_reclaimed)
         {
@@ -475,7 +475,7 @@ std::tuple<ResolveResult, typename VersionedPageEntries<Trait>::PageId, PageVers
             {
                 // copy and return the entry
                 if (entry != nullptr)
-                    *entry = iter->second.entry;
+                    *entry = iter->second.entry.value();
                 return {ResolveResult::TO_NORMAL, Trait::PageIdTrait::getInvalidID(), PageVersion(0)};
             }
             // else fallthrough to FAIL
@@ -491,7 +491,7 @@ std::tuple<ResolveResult, typename VersionedPageEntries<Trait>::PageId, PageVers
             auto iter = entries.find(create_ver);
             RUNTIME_CHECK(iter != entries.end());
             if (entry != nullptr)
-                *entry = iter->second.entry;
+                *entry = iter->second.entry.value();
             return {ResolveResult::TO_NORMAL, Trait::PageIdTrait::getInvalidID(), PageVersion(0)};
         }
     }
@@ -584,12 +584,13 @@ void VersionedPageEntries<Trait>::copyCheckpointInfoFromEdit(const typename Page
         RUNTIME_CHECK(iter->second.isEntry());
 
         bool is_local_data_reclaimed = false;
-        if (iter->second.entry.checkpoint_info.has_value())
-            is_local_data_reclaimed = iter->second.entry.checkpoint_info.is_local_data_reclaimed;
+        auto & entry = iter->second.entry.value();
+        if (entry.checkpoint_info.has_value())
+            is_local_data_reclaimed = entry.checkpoint_info.is_local_data_reclaimed;
         // else it does not have checkpoint_info, local data must be not reclaimed
 
-        iter->second.entry.checkpoint_info = edit.entry.checkpoint_info;
-        iter->second.entry.checkpoint_info.is_local_data_reclaimed = is_local_data_reclaimed; // keep this field value
+        entry.checkpoint_info = edit.entry.checkpoint_info;
+        entry.checkpoint_info.is_local_data_reclaimed = is_local_data_reclaimed; // keep this field value
 
         if (iter == entries.begin())
             break;
@@ -722,10 +723,10 @@ PageSize VersionedPageEntries<Trait>::getEntriesByBlobIds(
     // The total entries size that will be moved
     PageSize entry_size_full_gc = 0;
     const auto & last_entry = iter->second;
-    if (blob_ids.count(last_entry.entry.file_id) > 0)
+    if (const auto & entry = last_entry.entry.value(); blob_ids.count(entry.file_id) > 0)
     {
-        blob_versioned_entries[last_entry.entry.file_id].emplace_back(page_id, /* ver */ iter->first, last_entry.entry);
-        entry_size_full_gc += last_entry.entry.size;
+        blob_versioned_entries[entry.file_id].emplace_back(page_id, /* ver */ iter->first, entry);
+        entry_size_full_gc += entry.size;
     }
     return entry_size_full_gc;
 }
@@ -800,7 +801,7 @@ bool VersionedPageEntries<Trait>::cleanOutdatedEntries(
         {
             if (!valid_iter->second.isEntry())
                 continue;
-            auto entry = valid_iter->second.entry;
+            const auto & entry = valid_iter->second.entry.value();
             if (!entry.checkpoint_info.has_value())
                 continue;
             const auto & file_id = *entry.checkpoint_info.data_location.data_file_id;
@@ -824,7 +825,7 @@ bool VersionedPageEntries<Trait>::cleanOutdatedEntries(
                 {
                     if (entries_removed)
                     {
-                        entries_removed->emplace_back(iter->second.entry);
+                        entries_removed->emplace_back(iter->second.entry.value());
                     }
                     iter = entries.erase(iter);
                 }
@@ -837,7 +838,7 @@ bool VersionedPageEntries<Trait>::cleanOutdatedEntries(
                 // else there are newer "entry" in the version list, the outdated entries should be removed
                 if (entries_removed)
                 {
-                    entries_removed->emplace_back(iter->second.entry);
+                    entries_removed->emplace_back(iter->second.entry.value());
                 }
                 iter = entries.erase(iter);
             }
@@ -936,7 +937,7 @@ void VersionedPageEntries<Trait>::collapseTo(const UInt64 seq, const PageId & pa
             return;
         auto iter = entries.find(create_ver);
         RUNTIME_CHECK(iter != entries.end());
-        edit.varExternal(page_id, create_ver, iter->second.entry, being_ref_count.getRefCountInSnap(seq));
+        edit.varExternal(page_id, create_ver, iter->second.entry.value(), being_ref_count.getRefCountInSnap(seq));
         if (is_deleted && delete_ver.sequence <= seq)
         {
             edit.varDel(page_id, delete_ver);
@@ -954,7 +955,11 @@ void VersionedPageEntries<Trait>::collapseTo(const UInt64 seq, const PageId & pa
         if (last_iter->second.isEntry())
         {
             const auto & entry = last_iter->second;
-            edit.varEntry(page_id, /*ver*/ last_iter->first, entry.entry, entry.being_ref_count.getRefCountInSnap(seq));
+            edit.varEntry(
+                page_id,
+                /*ver*/ last_iter->first,
+                entry.entry.value(),
+                entry.being_ref_count.getRefCountInSnap(seq));
             return;
         }
         else if (last_iter->second.isDelete())
@@ -973,7 +978,7 @@ void VersionedPageEntries<Trait>::collapseTo(const UInt64 seq, const PageId & pa
                     return;
                 // It is being ref by another id, should persist the item and delete
                 const auto & entry = prev_iter->second;
-                edit.varEntry(page_id, prev_iter->first, entry.entry, ref_count_value);
+                edit.varEntry(page_id, prev_iter->first, entry.entry.value(), ref_count_value);
                 edit.varDel(page_id, last_version);
             }
         }

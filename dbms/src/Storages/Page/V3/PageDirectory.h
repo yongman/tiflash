@@ -206,45 +206,56 @@ private:
 
 struct EntryOrDelete
 {
-    bool is_delete = true;
     MultiVersionRefCount being_ref_count;
-    PageEntryV3 entry;
+    std::optional<PageEntryV3> entry;
 
-    static EntryOrDelete newDelete()
+    EntryOrDelete(const EntryOrDelete & other)
+        : being_ref_count(other.being_ref_count)
+        , entry(other.entry)
     {
-        return EntryOrDelete{
-            .is_delete = true,
-            .entry = {}, // meaningless
-        };
-    };
-    static EntryOrDelete newNormalEntry(const PageEntryV3 & entry)
-    {
-        return EntryOrDelete{
-            .is_delete = false,
-            .entry = entry,
-        };
+        PageStorageMemorySummary::versioned_entry_or_delete_count.fetch_add(1);
+        if (entry)
+            PageStorageMemorySummary::versioned_entry_or_delete_bytes.fetch_add(sizeof(PageEntryV3));
     }
+    EntryOrDelete() { PageStorageMemorySummary::versioned_entry_or_delete_count.fetch_add(1); }
+    EntryOrDelete(std::optional<PageEntryV3> entry_)
+        : entry(std::move(entry_))
+    {
+        PageStorageMemorySummary::versioned_entry_or_delete_count.fetch_add(1);
+        if (entry)
+            PageStorageMemorySummary::versioned_entry_or_delete_bytes.fetch_add(sizeof(PageEntryV3));
+    }
+    EntryOrDelete(MultiVersionRefCount being_ref_count_, std::optional<PageEntryV3> entry_)
+        : being_ref_count(being_ref_count_)
+        , entry(std::move(entry_))
+    {
+        PageStorageMemorySummary::versioned_entry_or_delete_count.fetch_add(1);
+        if (entry)
+            PageStorageMemorySummary::versioned_entry_or_delete_bytes.fetch_add(sizeof(PageEntryV3));
+    }
+    ~EntryOrDelete()
+    {
+        PageStorageMemorySummary::versioned_entry_or_delete_count.fetch_sub(1);
+        if (entry)
+            PageStorageMemorySummary::versioned_entry_or_delete_bytes.fetch_sub(sizeof(PageEntryV3));
+    }
+
+    static EntryOrDelete newDelete() { return EntryOrDelete(std::nullopt); };
+    static EntryOrDelete newNormalEntry(const PageEntryV3 & entry) { return EntryOrDelete(entry); }
     static EntryOrDelete newReplacingEntry(const EntryOrDelete & ori_entry, const PageEntryV3 & entry)
     {
-        return EntryOrDelete{
-            .is_delete = false,
-            .being_ref_count = ori_entry.being_ref_count,
-            .entry = entry,
-        };
+        return EntryOrDelete(ori_entry.being_ref_count, entry);
     }
 
     static EntryOrDelete newFromRestored(PageEntryV3 entry, const PageVersion & ver, Int64 being_ref_count)
     {
-        auto result = EntryOrDelete{
-            .is_delete = false,
-            .entry = entry,
-        };
+        auto result = EntryOrDelete(std::move(entry));
         result.being_ref_count.restoreFrom(ver, being_ref_count);
         return result;
     }
 
-    bool isDelete() const { return is_delete; }
-    bool isEntry() const { return !is_delete; }
+    bool isDelete() const { return !entry.has_value(); }
+    bool isEntry() const { return entry.has_value(); }
 };
 
 using PageLock = std::lock_guard<std::mutex>;
@@ -684,7 +695,7 @@ struct fmt::formatter<DB::PS::V3::EntryOrDelete>
         return fmt::format_to(
             ctx.out(),
             "{{is_delete:{}, entry:{}, being_ref_count:{}}}",
-            entry.is_delete,
+            entry.isDelete(),
             entry.entry,
             entry.being_ref_count.getLatestRefCount());
     }
