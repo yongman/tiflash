@@ -165,7 +165,7 @@ std::shared_ptr<Poco::Net::HTTPServer> getHTTPServer(
         key_path,
         cert_path,
         ca_path,
-        Poco::Net::Context::VerificationMode::VERIFY_STRICT);
+        Poco::Net::Context::VerificationMode::VERIFY_RELAXED);
 
     auto check_common_name = [&](const Poco::Crypto::X509Certificate & cert) {
         return global_context.getSecurityConfig()->checkCommonName(cert);
