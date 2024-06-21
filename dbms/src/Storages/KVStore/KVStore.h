@@ -220,6 +220,7 @@ public: // Region Management
     void releasePreHandledSnapshot(const RegionPtrWrap &, TMTContext & tmt);
     void abortPreHandleSnapshot(uint64_t region_id, TMTContext & tmt);
     size_t getOngoingPrehandleTaskCount() const;
+    size_t getOngoingPrehandleSubtaskCount() const;
 
     void handleDestroy(UInt64 region_id, TMTContext & tmt);
 
@@ -427,6 +428,7 @@ private:
     // Relates to `queue_size` in `can_apply_snapshot`,
     // we can't have access to these codes though.
     std::atomic<int64_t> ongoing_prehandle_task_count{0};
+    std::atomic<int64_t> ongoing_prehandle_subtask_count{0};
     ProxyConfigSummary proxy_config_summary;
 
     JointThreadInfoJeallocMapPtr joint_memory_allocation_map;
