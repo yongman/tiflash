@@ -56,6 +56,7 @@
     M(DT_SnapshotOfReadRaw)                     \
     M(DT_SnapshotOfSegmentSplit)                \
     M(DT_SnapshotOfSegmentMerge)                \
+    M(DT_SnapshotOfSegmentIngestIndex)          \
     M(DT_SnapshotOfSegmentIngest)               \
     M(DT_SnapshotOfDeltaMerge)                  \
     M(DT_SnapshotOfDeltaCompact)                \

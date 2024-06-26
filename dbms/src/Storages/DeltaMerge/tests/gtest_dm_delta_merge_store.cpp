@@ -260,7 +260,7 @@ try
     {
         new_cols = DMTestEnv::getDefaultColumns();
         ColumnDefine handle_column_define = (*new_cols)[0];
-        new_store = std::make_shared<DeltaMergeStore>(
+        new_store = DeltaMergeStore::create(
             *db_context,
             false,
             "test",
@@ -272,6 +272,7 @@ try
             handle_column_define,
             false,
             1,
+            nullptr,
             DeltaMergeStore::Settings());
         auto block = DMTestEnv::prepareSimpleWriteBlock(0, 100, false);
         new_store->write(*db_context, db_context->getSettingsRef(), block);
@@ -3147,7 +3148,7 @@ public:
     void setupDMStore()
     {
         auto cols = DMTestEnv::getDefaultColumns(pk_type);
-        store = std::make_shared<DeltaMergeStore>(
+        store = DeltaMergeStore::create(
             *db_context,
             false,
             "test",
@@ -3159,6 +3160,7 @@ public:
             (*cols)[0],
             pk_type == DMTestEnv::PkType::CommonHandle,
             1,
+            nullptr,
             DeltaMergeStore::Settings());
         dm_context = store->newDMContext(
             *db_context,
@@ -3172,7 +3174,7 @@ protected:
     DMContextPtr dm_context;
 
     UInt64 ps_ver{};
-    DMTestEnv::PkType pk_type;
+    DMTestEnv::PkType pk_type{};
 };
 
 INSTANTIATE_TEST_CASE_P(
