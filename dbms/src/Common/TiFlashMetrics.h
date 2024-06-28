@@ -400,6 +400,7 @@ namespace DB
       F(type_failed_timeout, {{"type", "failed_timeout"}}),                                                                         \
       F(type_failed_baddata, {{"type", "failed_baddata"}}),                                                                         \
       F(type_failed_repeated, {{"type", "failed_repeated"}}),                                                                       \
+      F(type_failed_build_chkpt, {{"type", "failed_build_chkpt"}}),                                                                 \
       F(type_restore, {{"type", "restore"}}),                                                                                       \
       F(type_succeed, {{"type", "succeed"}}))                                                                                       \
     M(tiflash_fap_task_state,                                                                                                       \
