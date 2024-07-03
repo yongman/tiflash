@@ -120,6 +120,7 @@ struct ProxyConfigSummary
 {
     bool valid = false;
     size_t snap_handle_pool_size = 0;
+    std::string engine_addr;
 };
 
 /// KVStore manages raft replication and transactions.
@@ -151,6 +152,7 @@ public:
     void reportThreadAllocInfo(std::string_view, ReportThreadAllocateInfoType type, uint64_t value);
     static void reportThreadAllocBatch(std::string_view, ReportThreadAllocateInfoBatch data);
     JointThreadInfoJeallocMapPtr getJointThreadInfoJeallocMap() const { return joint_memory_allocation_map; }
+    void fetchProxyConfig(const TiFlashRaftProxyHelper * proxy_helper);
 
 public: // Region Management
     void restore(PathPool & path_pool, const TiFlashRaftProxyHelper *);
@@ -303,6 +305,8 @@ private:
     StoreMeta & getStore();
     const StoreMeta & getStore() const;
 
+    //  ---- Raft Snapshot ----  //
+
     PrehandleResult preHandleSSTsToDTFiles(
         RegionPtr new_region,
         const SSTViewVec,
@@ -378,7 +382,6 @@ private:
 
     void releaseReadIndexWorkers();
     void handleDestroy(UInt64 region_id, TMTContext & tmt, const KVStoreTaskLock &);
-    void fetchProxyConfig(const TiFlashRaftProxyHelper * proxy_helper);
 
 #ifndef DBMS_PUBLIC_GTEST
 private:

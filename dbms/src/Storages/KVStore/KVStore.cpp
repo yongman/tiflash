@@ -73,6 +73,7 @@ KVStore::KVStore(Context & context)
     {
         LOG_WARNING(log, "JointThreadInfoJeallocMap is not inited from context");
     }
+    fetchProxyConfig(proxy_helper);
 }
 
 void KVStore::restore(PathPool & path_pool, const TiFlashRaftProxyHelper * proxy_helper)
@@ -119,31 +120,40 @@ void KVStore::restore(PathPool & path_pool, const TiFlashRaftProxyHelper * proxy
 
 void KVStore::fetchProxyConfig(const TiFlashRaftProxyHelper * proxy_helper)
 {
+    if (proxy_config_summary.valid)
+    {
+        LOG_INFO(log, "Skip duplicated parsing proxy config");
+    }
     // Try fetch proxy's config as a json string
-    UNUSED(proxy_helper); // serverless proxy not support
-    // if (proxy_helper && proxy_helper->fn_get_config_json)
-    // {
-    //     RustStrWithView rust_string
-    //         = proxy_helper->fn_get_config_json(proxy_helper->proxy_ptr, ConfigJsonType::ProxyConfigAddressed);
-    //     std::string cpp_string(rust_string.buff.data, rust_string.buff.len);
-    //     RustGcHelper::instance().gcRustPtr(rust_string.inner.ptr, rust_string.inner.type);
-    //     try
-    //     {
-    //         Poco::JSON::Parser parser;
-    //         auto obj = parser.parse(cpp_string);
-    //         auto ptr = obj.extract<Poco::JSON::Object::Ptr>();
-    //         auto raftstore = ptr->getObject("raftstore");
-    //         proxy_config_summary.snap_handle_pool_size = raftstore->getValue<uint64_t>("snap-handle-pool-size");
-    //         LOG_INFO(log, "Parsed proxy config snap_handle_pool_size {}", proxy_config_summary.snap_handle_pool_size);
-    //         proxy_config_summary.valid = true;
-    //     }
-    //     catch (...)
-    //     {
-    //         proxy_config_summary.valid = false;
-    //         // we don't care
-    //         LOG_WARNING(log, "Can't parse config from proxy {}", cpp_string);
-    //     }
-    // }
+    if (proxy_helper && proxy_helper->fn_get_config_json)
+    {
+        RustStrWithView rust_string
+            = proxy_helper->fn_get_config_json(proxy_helper->proxy_ptr, ConfigJsonType::ProxyConfigAddressed);
+        std::string cpp_string(rust_string.buff.data, rust_string.buff.len);
+        RustGcHelper::instance().gcRustPtr(rust_string.inner.ptr, rust_string.inner.type);
+        try
+        {
+            Poco::JSON::Parser parser;
+            auto obj = parser.parse(cpp_string);
+            auto ptr = obj.extract<Poco::JSON::Object::Ptr>();
+            auto raftstore = ptr->getObject("raftstore");
+            proxy_config_summary.snap_handle_pool_size = raftstore->getValue<uint64_t>("snap-handle-pool-size");
+            auto server = ptr->getObject("server");
+            proxy_config_summary.engine_addr = server->getValue<std::string>("engine-addr");
+            LOG_INFO(
+                log,
+                "Parsed proxy config: snap_handle_pool_size={} engine_addr={}",
+                proxy_config_summary.snap_handle_pool_size,
+                proxy_config_summary.engine_addr);
+            proxy_config_summary.valid = true;
+        }
+        catch (...)
+        {
+            proxy_config_summary.valid = false;
+            // we don't care
+            LOG_WARNING(log, "Can't parse config from proxy {}", cpp_string);
+        }
+    }
 }
 
 RegionPtr KVStore::getRegion(RegionID region_id) const
@@ -685,6 +695,7 @@ size_t KVStore::getOngoingPrehandleTaskCount() const
 {
     return std::max(0, ongoing_prehandle_task_count.load());
 }
+
 size_t KVStore::getOngoingPrehandleSubtaskCount() const
 {
     return std::max(0, prehandling_trace.ongoing_prehandle_subtask_count.load());
