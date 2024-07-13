@@ -34,7 +34,8 @@ DMFileBlockInputStreamBuilder::DMFileBlockInputStreamBuilder(const Context & con
     setCaches(
         global_context.getMarkCache(),
         global_context.getMinMaxIndexCache(),
-        global_context.getVectorIndexCache());
+        global_context.getVectorIndexCache(),
+        global_context.getColumnCacheLongTerm());
     // init from settings
     setFromSettings(context.getSettingsRef());
 }
@@ -211,6 +212,10 @@ SkippableBlockInputStreamPtr DMFileBlockInputStreamBuilder::build2(
         enable_read_thread,
         scan_context,
         read_tag);
+
+    if (column_cache_long_term && pk_col_id)
+        // ColumnCacheLongTerm is only filled in Vector Search.
+        rest_columns_reader.setColumnCacheLongTerm(column_cache_long_term, pk_col_id);
 
     DMFileWithVectorIndexBlockInputStreamPtr reader = DMFileWithVectorIndexBlockInputStream::create(
         ann_query_info,
