@@ -112,4 +112,4 @@ jobs:
           repo: tidbcloud/tiflash-autoscale-supervisor
           ref: refs/heads/main
           token: ${{ secrets.GIT_ACTION_BOT }}
-          inputs: '{ "commit": "${{ github.sha }}" }'
+          inputs: '{ "commit": "${{ github.sha }}", "extra_assignee": "${{ github.actor }}", "extra_url": "${{github.server_url}}/${{ github.repository }}/actions/runs/${{ github.run_id }}" }'
