@@ -7,6 +7,10 @@ on:
         description: "update daily-run test image"
         type: boolean
         default: false
+      update_cn_image:
+        description: create a PR to update CN image
+        type: boolean
+        default: false
 
 jobs:
   build-arm64:
@@ -100,3 +104,12 @@ jobs:
           --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
 
           docker manifest push hub.pingcap.net/keyspace/tiflash:v7.5.0
+      - name: Update CN image to track this version
+        if: ${{ inputs.update_cn_image }}
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: update-image-version.yaml
+          repo: tidbcloud/tiflash-autoscale-supervisor
+          ref: refs/heads/main
+          token: ${{ secrets.GIT_ACTION_BOT }}
+          inputs: '{ "commit": "${{ github.sha }}" }'
