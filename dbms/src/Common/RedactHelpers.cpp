@@ -24,7 +24,8 @@ std::atomic<bool> Redact::REDACT_LOG = false;
 
 void Redact::setRedactLog(bool v)
 {
-    pingcap::Redact::setRedactLog(v); // set redact flag for client-c
+    pingcap::RedactMode mode = v ? pingcap::RedactMode::Enable : pingcap::RedactMode::Disable;
+    pingcap::Redact::setRedactLog(mode); // set redact flag for client-c
     Redact::REDACT_LOG.store(v, std::memory_order_relaxed);
 }
 
