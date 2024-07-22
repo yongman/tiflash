@@ -1,3 +1,6 @@
+# We want to use C++23, but GRPC is not ready
+set (CMAKE_CXX_STANDARD 20)
+
 set(_gRPC_SOURCE_DIR "${TiFlash_SOURCE_DIR}/contrib/grpc")
 set(_gRPC_BINARY_DIR "${TiFlash_BINARY_DIR}/contrib/grpc")
 

@@ -13,64 +13,127 @@ on:
         default: false
 
 jobs:
-  build-arm64:
-    name: Build ARM64 Image
-    runs-on: arm64
-    timeout-minutes: 180
+  build:
+    name: Build Release
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [X64, ARM64]
+    runs-on:
+      - self-hosted
+      - serverless
+      - ${{ matrix.arch }}
+    timeout-minutes: 60
+    env:
+      # GitHub Action supports color output
+      CLICOLOR_FORCE: "1"
+      CMAKE_COLOR_DIAGNOSTICS: ON
     steps:
+      - name: Setup minio
+        run: |
+          mc alias set minio_server ${{ vars.MINIO_ENDPOINT }} ${{ secrets.MINIO_AK }} ${{ secrets.MINIO_SK }}
+
       - name: Checkout repository and submodules
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           ref: ${{ github.event.inputs.branch }}
           token: ${{ secrets.GIT_ACTION_BOT }}
           fetch-depth: 0
+          clean: false # Preserve build artifacts for reuse
+
+      - name: Prepare TiFlash Proxy cache
+        id: proxy_cache
+        run: |
+          pushd contrib/tiflash-proxy > /dev/null
+          PROXY_COMMIT=$(git log -1 --format=%H)
+          popd > /dev/null
+
+          PROXY_CACHE_DIR=minio_server/tiflash-cse-ci/cd_tiflash_proxy_cache
+          mc ls $PROXY_CACHE_DIR
+
+          PROXY_CACHE_OBJECT=$PROXY_CACHE_DIR/$PROXY_COMMIT-$(uname -p)-release.so
+          echo "PROXY_CACHE_OBJECT=$PROXY_CACHE_OBJECT" | tee -a $GITHUB_OUTPUT
+
+          rm -f /tmp/libtiflash_proxy.so
+          mc cp $PROXY_CACHE_OBJECT /tmp/libtiflash_proxy.so || true
+          if [ -f /tmp/libtiflash_proxy.so ]
+          then
+            # Cache exist, we will reuse the TiFlash proxy library.
+            echo "USE_INTERNAL_TIFLASH_PROXY=OFF" | tee -a $GITHUB_OUTPUT
+            mkdir -p contrib/tiflash-proxy/target/release
+            cp /tmp/libtiflash_proxy.so contrib/tiflash-proxy/target/release/libtiflash_proxy.so
+          else
+            # Cache not exist, we will build a new TiFlash proxy library.
+            echo "USE_INTERNAL_TIFLASH_PROXY=ON" | tee -a $GITHUB_OUTPUT
+            rm -rf contrib/tiflash-proxy/target/release
+            echo "::warning ::TiFlash proxy library cache not found, will build a new one."
+          fi
+
+      - name: Configure
+        run: |
+          mkdir -p cmake-build-Release
+          cd cmake-build-Release
+
+          # Always clean up cmake cache for release.
+          cmake .. -GNinja --fresh \
+            -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DENABLE_TESTING=OFF \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_FAILPOINTS=OFF \
+            -DPREBUILT_LIBS_ROOT=$GITHUB_WORKSPACE/contrib/tiflash-proxy/ \
+            -DUSE_INTERNAL_TIFLASH_PROXY=${{ steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY }}
+
+      - name: Build
+        run: |
+          cd cmake-build-Release
+          cmake --build . --target tiflash --parallel $(nproc)
+          rm -rf artifacts  # Clean up old artifacts. There is no workspace clean up.
+          cmake --install . --component=tiflash-release --prefix=artifacts
+
+      - name: Print Build Version
+        run: |
+          cd cmake-build-Release/artifacts
+          ./tiflash version
+
+      - name: Cache TiFlash Proxy
+        if: steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY == 'ON'
+        run: |
+          mc cp cmake-build-Release/contrib/tiflash-proxy-cmake/release/libtiflash_proxy.so ${{ steps.proxy_cache.outputs.PROXY_CACHE_OBJECT }}
+
       - name: Login to Harbor
         uses: docker/login-action@v3
         with:
           registry: hub.pingcap.net
           username: ${{ secrets.HARBOR_USER }}
           password: ${{ secrets.HARBOR_TOKEN }}
-      - name: Build and Push Images
+
+      - name: Prepare Build Image
+        id: image_id
+        run: |
+          VERSION=${{ github.sha }}-$(dpkg --print-architecture)
+          echo "VERSION=$VERSION" | tee -a $GITHUB_OUTPUT
+
+          TAG=hub.pingcap.net/sunxiaoguang/serverless/tiflash:$VERSION
+          echo "TAG=$TAG" | tee -a $GITHUB_OUTPUT
+
+      - name: Build and Push Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: release-centos7-llvm/dockerfiles/Dockerfile-tiflash-cse-multiarch
-          platforms: "linux/arm64"
+          file: release-serverless/Dockerfile
           push: true
-          tags: hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
-  build-amd64:
-    name: Build AMD64 Image
-    runs-on: amd64
-    timeout-minutes: 180
-    outputs:
-      image: tiflash-cse:${{ github.sha }}-amd64
-    steps:
-      - name: Checkout repository and submodules
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          ref: ${{ github.event.inputs.branch }}
-          token: ${{ secrets.GIT_ACTION_BOT }}
-          fetch-depth: 0
-      - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: hub.pingcap.net
-          username: ${{ secrets.HARBOR_USER }}
-          password: ${{ secrets.HARBOR_TOKEN }}
-      - name: Build and Push Images
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: release-centos7-llvm/dockerfiles/Dockerfile-tiflash-cse-multiarch
-          platforms: "linux/amd64"
-          push: true
-          tags: hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-amd64
+          tags: ${{ steps.image_id.outputs.TAG }}
+
   multi-arch:
     name: Create Multi-Architecture Image
-    runs-on: amd64
-    needs: ["build-arm64", "build-amd64"]
+    runs-on:
+      - self-hosted
+      - serverless
+      - X64
+    needs: ["build"]
     steps:
       - name: Login to Harbor
         uses: docker/login-action@v3
@@ -86,6 +149,7 @@ jobs:
       - name: push-manifest harbor
         run: |
           docker manifest push hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}
+
       - name: Login to Harbor (keyspace)
         if: ${{ inputs.update_daily_run_image }}
         uses: docker/login-action@v3
@@ -93,6 +157,7 @@ jobs:
           registry: hub.pingcap.net
           username: "robot$keyspace+cdbot"
           password: ${{ secrets.HARBOR_KEYSPACE_TOKEN }}
+
       - name: set-additional-tags
         if: ${{ inputs.update_daily_run_image }}
         run: |
@@ -104,6 +169,7 @@ jobs:
           --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
 
           docker manifest push hub.pingcap.net/keyspace/tiflash:v7.5.0
+
       - name: Update CN image to track this version
         if: ${{ inputs.update_cn_image }}
         uses: benc-uk/workflow-dispatch@v1

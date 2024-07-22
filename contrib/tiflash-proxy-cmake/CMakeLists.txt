@@ -69,15 +69,16 @@ endif()
 
 message(STATUS "Using rust env for tiflash-proxy: ${TIFLASH_RUST_ENV}")
 
-add_custom_command(OUTPUT ${_TIFLASH_PROXY_LIBRARY}
+add_custom_command(
+    OUTPUT
+        ${_TIFLASH_PROXY_LIBRARY}                   # Real output
+        ${_TIFLASH_PROXY_LIBRARY}_always_rerun      # Always rerun the build. Rust takes care of incremental build.
     COMMENT "Building TiFlash Proxy using ${_TIFLASH_PROXY_BUILD_PROFILE} profile"
     COMMAND ${CMAKE_COMMAND} -E env ${TIFLASH_RUST_ENV} ${_TIFLASH_PROXY_MAKE_COMMAND}
     VERBATIM
     USES_TERMINAL
     WORKING_DIRECTORY ${_TIFLASH_PROXY_SOURCE_DIR}
-    DEPENDS "${_TIFLASH_PROXY_SRCS}"
-            "${_TIFLASH_PROXY_SOURCE_DIR}/Cargo.lock"
-            "${TiFlash_SOURCE_DIR}/rust-toolchain")
+)
 
 add_custom_target(tiflash_proxy ALL DEPENDS ${_TIFLASH_PROXY_LIBRARY})
 add_library(libtiflash_proxy SHARED IMPORTED GLOBAL)

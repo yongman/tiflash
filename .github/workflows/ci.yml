@@ -4,32 +4,128 @@ on:
   pull_request:
     branches: ["cloud-engine-on-release-7.5"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-amd64:
-    name: Build on AMD64
-    runs-on: amd64
-    timeout-minutes: 180
-    outputs:
-      image: tiflash-cse:${{ github.sha }}-amd64
+  build:
+    name: Build
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [X64, ARM64]
+    runs-on:
+      - self-hosted
+      - serverless # Note: Only repository runners has TiFlash build envs.
+      - ${{ matrix.arch }}
+    timeout-minutes: 60
+    env:
+      # GitHub Action supports color output
+      CLICOLOR_FORCE: "1"
+      CMAKE_COLOR_DIAGNOSTICS: ON
     steps:
+      - name: Setup minio
+        run: |
+          mc alias set minio_server ${{ vars.MINIO_ENDPOINT }} ${{ secrets.MINIO_AK }} ${{ secrets.MINIO_SK }}
+
       - name: Checkout repository and submodules
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           ref: ${{ github.event.inputs.branch }}
           token: ${{ secrets.GIT_ACTION_BOT }}
           fetch-depth: 0
-      - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: hub.pingcap.net
-          username: ${{ secrets.HARBOR_USER }}
-          password: ${{ secrets.HARBOR_TOKEN }}
+          clean: false # Preserve build artifacts for reuse
+
+      - name: Prepare TiFlash Proxy cache
+        id: proxy_cache
+        run: |
+          pushd contrib/tiflash-proxy > /dev/null
+          PROXY_COMMIT=$(git log -1 --format=%H)
+          popd > /dev/null
+
+          PROXY_CACHE_DIR=minio_server/tiflash-cse-ci/ci_tiflash_proxy_cache
+          mc ls $PROXY_CACHE_DIR
+
+          PROXY_CACHE_OBJECT=$PROXY_CACHE_DIR/$PROXY_COMMIT-$(uname -p)-debug.so
+          echo "PROXY_CACHE_OBJECT=$PROXY_CACHE_OBJECT" | tee -a $GITHUB_OUTPUT
+
+          rm -f /tmp/libtiflash_proxy.so
+          mc cp $PROXY_CACHE_OBJECT /tmp/libtiflash_proxy.so || true
+          if [ -f /tmp/libtiflash_proxy.so ]
+          then
+            # Cache exist, we will reuse the TiFlash proxy library.
+            echo "USE_INTERNAL_TIFLASH_PROXY=OFF" | tee -a $GITHUB_OUTPUT
+            mkdir -p contrib/tiflash-proxy/target/release
+            cp /tmp/libtiflash_proxy.so contrib/tiflash-proxy/target/release/libtiflash_proxy.so
+          else
+            # Cache not exist, we will build a new TiFlash proxy library.
+            echo "USE_INTERNAL_TIFLASH_PROXY=ON" | tee -a $GITHUB_OUTPUT
+            rm -rf contrib/tiflash-proxy/target/release
+            echo "::warning ::TiFlash proxy library cache not found, will build a new one."
+          fi
+
+      - name: Configure
+        # First configure based on cache, if failed, retry without cache.
+        run: |
+          mkdir -p cmake-build-Debug
+          cd cmake-build-Debug
+
+          cmake .. -GNinja --fresh \
+            -DCMAKE_BUILD_TYPE=DEBUG \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DDEBUG_WITHOUT_DEBUG_INFO=ON \
+            -DENABLE_TESTS=ON \
+            -DPREBUILT_LIBS_ROOT=$GITHUB_WORKSPACE/contrib/tiflash-proxy/ \
+            -DUSE_INTERNAL_TIFLASH_PROXY=${{ steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY }}
+
       - name: Build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: release-centos7-llvm/dockerfiles/Dockerfile-tiflash-cse-multiarch
-          platforms: "linux/amd64"
-          push: false
-          tags: hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-amd64
+        run: |
+          cd cmake-build-Debug
+          cmake --build . --target gtests_dbms tiflash --parallel $(nproc)
+
+      - name: Cache TiFlash Proxy
+        if: steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY == 'ON'
+        run: |
+          mc cp cmake-build-Debug/contrib/tiflash-proxy-cmake/debug/libtiflash_proxy.so ${{ steps.proxy_cache.outputs.PROXY_CACHE_OBJECT }}
+
+      - name: Upload Artifact
+        if: matrix.arch == 'X64' # Only run unit tests on X64
+        run: |
+          mc cp ./cmake-build-Debug/dbms/gtests_dbms minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
+
+  unit_test:
+    name: Unit Test
+    runs-on: [self-hosted, serverless, X64]
+    needs: build
+    timeout-minutes: 30
+    steps:
+      - name: Setup minio
+        run: |
+          mc alias set minio_server ${{ vars.MINIO_ENDPOINT }} ${{ secrets.MINIO_AK }} ${{ secrets.MINIO_SK }}
+
+      - name: Download Artifact
+        run: |
+          mc cp minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms /tmp/gtests_dbms
+
+      - name: Run Tests (Vector)
+        # Currently only Vector feature is newly introduced in TiFlash,
+        # so we just run vector tests to now.
+        run: |
+          chmod +x /tmp/gtests_dbms
+          cd /tmp
+          /tmp/gtests_dbms --gtest_filter="Vector*" 2>/tmp/gtests_dbms.log
+
+      - name: Detailed Test Log
+        if: failure()
+        run: |
+          LOG_PATH=tiflash-cse-ci/ci_unit_test_log/${{ github.run_id }}/$(date +%s)-gtests_dbms.log
+          mc cp /tmp/gtests_dbms.log minio_server/$LOG_PATH
+          echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
+
+      - name: Clean up artifact
+        if: always()
+        run: |
+          mc rm minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
