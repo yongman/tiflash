@@ -32,18 +32,6 @@ extern "C" __attribute__((visibility("default"))) void * memset(void * dst, int 
     return inline_memset(dst, c, size);
 }
 
-extern "C++" __attribute__((visibility("default"))) const void * memchr(const void * src, int c, size_t size) noexcept(
-    true)
-{
-    return inline_memchr(src, c, size);
-}
-
-extern "C++" __attribute__((visibility("default"))) const void * memrchr(const void * src, int c, size_t size) noexcept(
-    true)
-{
-    return inline_memrchr(src, c, size);
-}
-
 extern "C" __attribute__((visibility("default"))) int memcmp(const void * src1, const void * src2, size_t size)
 {
     return inline_memcmp(src1, src2, size);
@@ -62,21 +50,6 @@ extern "C" __attribute__((visibility("default"))) char * stpcpy(char * __restric
 extern "C" __attribute__((visibility("default"))) int strcmp(const char * src1_, const char * src2_)
 {
     return inline_strcmp(src1_, src2_);
-}
-
-extern "C++" __attribute__((visibility("default"))) const char * strchr(const char * src_, int c) noexcept(true)
-{
-    return inline_strchr(src_, c);
-}
-
-extern "C++" __attribute__((visibility("default"))) const char * strrchr(const char * src_, int c) noexcept(true)
-{
-    return inline_strrchr(src_, c);
-}
-
-extern "C++" __attribute__((visibility("default"))) const char * strchrnul(const char * src_, int c) noexcept(true)
-{
-    return inline_strchrnul(src_, c);
 }
 
 extern "C" __attribute__((visibility("default"))) size_t strlen(const char * src_)
