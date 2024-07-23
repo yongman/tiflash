@@ -13,6 +13,10 @@
 // limitations under the License.
 
 #include "aor.h"
+/**
+  * Note that this file is not the same as the master branch.
+  * Some functions have been changed for Ubuntu 22.04.
+  */
 
 extern "C" __attribute__((visibility("default"))) void * memcpy(
     void * __restrict dst,
