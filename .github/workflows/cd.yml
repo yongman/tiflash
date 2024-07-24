@@ -11,6 +11,10 @@ on:
         description: create a PR to update CN image
         type: boolean
         default: false
+      auto_merge_update_cn_image:
+        description: auto merge PR to update CN image
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -178,4 +182,10 @@ jobs:
           repo: tidbcloud/tiflash-autoscale-supervisor
           ref: refs/heads/main
           token: ${{ secrets.GIT_ACTION_BOT }}
-          inputs: '{ "commit": "${{ github.sha }}", "extra_assignee": "${{ github.actor }}", "extra_url": "${{github.server_url}}/${{ github.repository }}/actions/runs/${{ github.run_id }}" }'
+          inputs: |
+            {
+              "commit": "${{ github.sha }}",
+              "extra_assignee": "${{ github.actor }}",
+              "extra_url": "${{github.server_url}}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "auto_approve": "${{ inputs.auto_merge_update_cn_image }}"
+            }
