@@ -116,7 +116,7 @@ jobs:
         run: |
           chmod +x /tmp/gtests_dbms
           cd /tmp
-          /tmp/gtests_dbms --gtest_filter="Vector*" 2>/tmp/gtests_dbms.log
+          /tmp/gtests_dbms --gtest_filter="Vector*:FileCacheTest*" 2>/tmp/gtests_dbms.log
 
       - name: Detailed Test Log
         if: failure()
