@@ -482,7 +482,7 @@ try
 
         auto dimension = vector_index_json->getValue<UInt64>("dimension");
         RUNTIME_CHECK(dimension > 0);
-        RUNTIME_CHECK(dimension <= 16000); // Just a protection
+        RUNTIME_CHECK(dimension <= 16383); // Just a protection
 
         tipb::VectorDistanceMetric distance_metric = tipb::VectorDistanceMetric::INVALID_DISTANCE_METRIC;
         ok = tipb::VectorDistanceMetric_Parse( //
