@@ -13,12 +13,14 @@
 // limitations under the License.
 
 #include <Common/FailPoint.h>
-#include <Encryption/PosixRandomAccessFile.h>
+#include <Common/SyncPoint/Ctl.h>
 #include <Flash/Disaggregated/MockS3LockClient.h>
 #include <Flash/Disaggregated/S3LockClient.h>
 #include <IO/ReadBufferFromFile.h>
 #include <IO/ReadBufferFromRandomAccessFile.h>
 #include <IO/WriteBufferFromWritableFile.h>
+#include <Encryption/PosixRandomAccessFile.h>
+#include <Encryption/MockKeyManager.h>
 #include <IO/copyData.h>
 #include <Storages/Page/V3/BlobStore.h>
 #include <Storages/Page/V3/CheckpointFile/CPFilesWriter.h>
@@ -37,11 +39,16 @@
 
 #include <memory>
 
-namespace DB
+namespace DB::FailPoints
 {
-namespace PS::universal::tests
+extern const char pause_before_page_dir_update_local_cache[];
+} // namespace DB::FailPoints
+
+namespace DB::PS::universal::tests
 {
-class UniPageStorageRemoteReadTest : public DB::base::TiFlashStorageTestBasic
+class UniPageStorageRemoteReadTest
+    : public DB::base::TiFlashStorageTestBasic
+    , public testing::WithParamInterface<std::pair<bool, bool>>
 {
 public:
     UniPageStorageRemoteReadTest()
@@ -52,12 +59,14 @@ public:
     {
         TiFlashStorageTestBasic::SetUp();
         auto path = getTemporaryPath();
-        dir_ = path;
-        data_file_path_pattern = dir_ + "/data_{index}";
+        dir = path;
+        data_file_path_pattern = dir + "/data_{index}";
         data_file_id_pattern = "data_{index}";
-        manifest_file_path = dir_ + "/manifest_foo";
+        manifest_file_path = dir + "/manifest_foo";
         manifest_file_id = "manifest_foo";
         createIfNotExist(path);
+        auto [is_encrypted, is_keyspace_encrypted] = GetParam();
+        KeyManagerPtr key_manager = std::make_shared<MockKeyManager>(is_encrypted);
         file_provider = DB::tests::TiFlashTestEnv::getDefaultFileProvider();
         delegator = std::make_shared<DB::tests::MockDiskDelegatorSingle>(path);
         s3_client = S3::ClientFactory::instance().sharedTiFlashClient();
@@ -102,7 +111,7 @@ protected:
 
 protected:
     StoreID test_store_id = 1234;
-    String dir_;
+    String dir;
     FileProviderPtr file_provider;
     PSDiskDelegatorPtr delegator;
     std::shared_ptr<S3::TiFlashS3Client> s3_client;
@@ -117,7 +126,7 @@ protected:
     String manifest_file_path;
 };
 
-TEST_F(UniPageStorageRemoteReadTest, WriteRead)
+TEST_P(UniPageStorageRemoteReadTest, WriteRead)
 try
 {
     auto writer = PS::V3::CPFilesWriter::create({
@@ -201,7 +210,7 @@ try
 }
 CATCH
 
-TEST_F(UniPageStorageRemoteReadTest, WriteReadWithRestart)
+TEST_P(UniPageStorageRemoteReadTest, WriteReadWithRestart)
 try
 {
     auto writer = PS::V3::CPFilesWriter::create({
@@ -275,7 +284,186 @@ try
 }
 CATCH
 
-TEST_F(UniPageStorageRemoteReadTest, WriteReadWithRef)
+TEST_P(UniPageStorageRemoteReadTest, WriteReadGCWithRestart)
+try
+{
+    const String test_page_id = "aaabbb";
+    /// Prepare data on remote store
+    auto writer = PS::V3::CPFilesWriter::create({
+        .data_file_path_pattern = data_file_path_pattern,
+        .data_file_id_pattern = data_file_id_pattern,
+        .manifest_file_path = manifest_file_path,
+        .manifest_file_id = manifest_file_id,
+        .data_source = PS::V3::CPWriteDataSourceFixture::create({{10, "nahida opened her eyes"}}),
+    });
+
+    writer->writePrefix({
+        .writer = {},
+        .sequence = 5,
+        .last_sequence = 3,
+    });
+    {
+        auto edits = PS::V3::universal::PageEntriesEdit{};
+        edits.appendRecord(
+            {.type = PS::V3::EditRecordType::VAR_ENTRY, .page_id = test_page_id, .entry = {.size = 22, .offset = 10}});
+        writer->writeEditsAndApplyCheckpointInfo(edits);
+    }
+    auto data_paths = writer->writeSuffix();
+    writer.reset();
+    for (const auto & data_path : data_paths)
+    {
+        uploadFile(data_path);
+    }
+    uploadFile(manifest_file_path);
+
+    /// Put remote page into local
+    auto manifest_file = PosixRandomAccessFile::create(manifest_file_path);
+    auto manifest_reader = PS::V3::CPManifestFileReader::create({
+        .plain_file = manifest_file,
+    });
+    manifest_reader->readPrefix();
+    PS::V3::CheckpointProto::StringsInternMap im;
+    {
+        auto edits_r = manifest_reader->readEdits(im);
+        auto r = edits_r->getRecords();
+        ASSERT_EQ(1, r.size());
+
+        UniversalWriteBatch wb;
+        wb.disableRemoteLock();
+        wb.putRemotePage(
+            r[0].page_id,
+            0,
+            r[0].entry.size,
+            r[0].entry.checkpoint_info.data_location,
+            std::move(r[0].entry.field_offsets));
+        page_storage->write(std::move(wb));
+    }
+
+    // generate snapshot for reading
+    auto snap0 = page_storage->getSnapshot("read");
+
+    // Delete the page before reading from snapshot
+    {
+        UniversalWriteBatch wb;
+        wb.disableRemoteLock();
+        wb.delPage(test_page_id);
+        page_storage->write(std::move(wb));
+    }
+
+    // read with snapshot
+    {
+        auto page = page_storage->read(test_page_id, nullptr, snap0);
+        ASSERT_TRUE(page.isValid());
+        ASSERT_EQ("nahida opened her eyes", String(page.data.begin(), page.data.size()));
+    }
+
+    // Mock restart
+    reload();
+
+    {
+        // ensure the page is deleted as expected
+        auto page = page_storage->read(test_page_id, nullptr, nullptr, false);
+        ASSERT_FALSE(page.isValid());
+    }
+}
+CATCH
+
+TEST_P(UniPageStorageRemoteReadTest, MultiThreadReadUpdateRmotePage)
+try
+{
+    const String test_page_id = "aaabbb";
+    /// Prepare data on remote store
+    auto writer = PS::V3::CPFilesWriter::create({
+        .data_file_path_pattern = data_file_path_pattern,
+        .data_file_id_pattern = data_file_id_pattern,
+        .manifest_file_path = manifest_file_path,
+        .manifest_file_id = manifest_file_id,
+        .data_source = PS::V3::CPWriteDataSourceFixture::create({{10, "nahida opened her eyes"}}),
+    });
+
+    writer->writePrefix({
+        .writer = {},
+        .sequence = 5,
+        .last_sequence = 3,
+    });
+    {
+        auto edits = PS::V3::universal::PageEntriesEdit{};
+        edits.appendRecord(
+            {.type = PS::V3::EditRecordType::VAR_ENTRY, .page_id = test_page_id, .entry = {.size = 22, .offset = 10}});
+        writer->writeEditsAndApplyCheckpointInfo(edits);
+    }
+    auto data_paths = writer->writeSuffix();
+    writer.reset();
+    for (const auto & data_path : data_paths)
+    {
+        uploadFile(data_path);
+    }
+    uploadFile(manifest_file_path);
+
+    /// Put remote page into local
+    auto manifest_file = PosixRandomAccessFile::create(manifest_file_path);
+    auto manifest_reader = PS::V3::CPManifestFileReader::create({
+        .plain_file = manifest_file,
+    });
+    manifest_reader->readPrefix();
+    PS::V3::CheckpointProto::StringsInternMap im;
+    {
+        auto edits_r = manifest_reader->readEdits(im);
+        auto r = edits_r->getRecords();
+        ASSERT_EQ(1, r.size());
+
+        UniversalWriteBatch wb;
+        wb.disableRemoteLock();
+        wb.putRemotePage(
+            r[0].page_id,
+            0,
+            r[0].entry.size,
+            r[0].entry.checkpoint_info.data_location,
+            std::move(r[0].entry.field_offsets));
+        page_storage->write(std::move(wb));
+    }
+
+    // read with snapshot
+    FAIL_POINT_PAUSE(FailPoints::pause_before_page_dir_update_local_cache);
+    auto th_read0 = std::async([&]() {
+        auto snap0 = page_storage->getSnapshot("read0");
+        auto page = page_storage->read(test_page_id, nullptr, snap0);
+        ASSERT_TRUE(page.isValid());
+        ASSERT_EQ("nahida opened her eyes", String(page.data.begin(), page.data.size()));
+        LOG_DEBUG(log, "th_read0 finished");
+    });
+    auto th_read1 = std::async([&]() {
+        auto snap1 = page_storage->getSnapshot("read1");
+        auto page = page_storage->read(test_page_id, nullptr, snap1);
+        ASSERT_TRUE(page.isValid());
+        ASSERT_EQ("nahida opened her eyes", String(page.data.begin(), page.data.size()));
+        LOG_DEBUG(log, "th_read1 finished");
+    });
+    LOG_DEBUG(log, "concurrent read block before update");
+
+    FailPointHelper::disableFailPoint(FailPoints::pause_before_page_dir_update_local_cache);
+    th_read0.get();
+    th_read1.get();
+    LOG_DEBUG(log, "there must be one read thread update fail");
+
+    {
+        auto page = page_storage->read(test_page_id);
+        ASSERT_TRUE(page.isValid());
+        ASSERT_EQ("nahida opened her eyes", String(page.data.begin(), page.data.size()));
+    }
+
+    // Mock restart
+    reload();
+
+    {
+        auto page = page_storage->read(test_page_id);
+        ASSERT_TRUE(page.isValid());
+        ASSERT_EQ("nahida opened her eyes", String(page.data.begin(), page.data.size()));
+    }
+}
+CATCH
+
+TEST_P(UniPageStorageRemoteReadTest, WriteReadWithRef)
 try
 {
     auto writer = PS::V3::CPFilesWriter::create({
@@ -363,7 +551,7 @@ try
 }
 CATCH
 
-TEST_F(UniPageStorageRemoteReadTest, WriteReadMultiple)
+TEST_P(UniPageStorageRemoteReadTest, WriteReadMultiple)
 try
 {
     auto writer = PS::V3::CPFilesWriter::create({
@@ -450,7 +638,7 @@ try
 }
 CATCH
 
-TEST_F(UniPageStorageRemoteReadTest, WriteReadWithFields)
+TEST_P(UniPageStorageRemoteReadTest, WriteReadWithFields)
 try
 {
     PageTypeAndConfig page_type_and_config{
@@ -559,7 +747,7 @@ try
 }
 CATCH
 
-TEST_F(UniPageStorageRemoteReadTest, WriteReadExternal)
+TEST_P(UniPageStorageRemoteReadTest, WriteReadExternal)
 try
 {
     UniversalPageId page_id1{"aaabbb"};
@@ -606,5 +794,10 @@ try
 }
 CATCH
 
-} // namespace PS::universal::tests
-} // namespace DB
+INSTANTIATE_TEST_CASE_P(
+    UniPageStorageRemote,
+    UniPageStorageRemoteReadTest,
+    // <is_encrypted, is_keyspace_encrypted>
+    testing::Values(std::make_pair(false, false), std::make_pair(true, false), std::make_pair(true, true)));
+
+} // namespace DB::PS::universal::tests

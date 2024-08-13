@@ -116,17 +116,18 @@ namespace DB
     M(delta_tree_create_node_fail)                           \
     M(disable_flush_cache)
 
-#define APPLY_FOR_PAUSEABLE_FAILPOINTS_ONCE(M) \
-    M(pause_with_alter_locks_acquired)         \
-    M(hang_in_execution)                       \
-    M(pause_before_dt_background_delta_merge)  \
-    M(pause_until_dt_background_delta_merge)   \
-    M(pause_before_apply_raft_cmd)             \
-    M(pause_before_apply_raft_snapshot)        \
-    M(pause_until_apply_raft_snapshot)         \
-    M(pause_after_copr_streams_acquired_once)  \
-    M(pause_before_register_non_root_mpp_task) \
-    M(pause_before_make_non_root_mpp_task_active)
+#define APPLY_FOR_PAUSEABLE_FAILPOINTS_ONCE(M)    \
+    M(pause_with_alter_locks_acquired)            \
+    M(hang_in_execution)                          \
+    M(pause_before_dt_background_delta_merge)     \
+    M(pause_until_dt_background_delta_merge)      \
+    M(pause_before_apply_raft_cmd)                \
+    M(pause_before_apply_raft_snapshot)           \
+    M(pause_until_apply_raft_snapshot)            \
+    M(pause_after_copr_streams_acquired_once)     \
+    M(pause_before_register_non_root_mpp_task)    \
+    M(pause_before_make_non_root_mpp_task_active) \
+    M(pause_before_page_dir_update_local_cache)
 
 #define APPLY_FOR_PAUSEABLE_FAILPOINTS(M) \
     M(pause_when_reading_from_dt_stream)  \
