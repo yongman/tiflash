@@ -116,7 +116,7 @@ jobs:
         run: |
           chmod +x /tmp/gtests_dbms
           cd /tmp
-          /tmp/gtests_dbms --gtest_filter="Vector*:FileCacheTest*" 2>/tmp/gtests_dbms.log
+          /tmp/gtests_dbms --gtest_filter="Vector*:FileCacheTest*:DeltaMergeStoreVectorTest*" 2>/tmp/gtests_dbms.log
 
       - name: Detailed Test Log
         if: failure()
@@ -126,6 +126,6 @@ jobs:
           echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
 
       - name: Clean up artifact
-        if: always()
+        if: success()
         run: |
           mc rm minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
