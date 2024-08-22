@@ -1084,27 +1084,16 @@ String createTableStmt(
         writeString(columns[i].type->getName(), stmt_buf);
     }
 
-    // storage engine type
-    if (table_info.engine_type == TiDB::StorageEngine::DT)
+    writeString(") Engine = DeltaMerge((", stmt_buf);
+    for (size_t i = 0; i < pks.size(); i++)
     {
-        writeString(") Engine = DeltaMerge((", stmt_buf);
-        for (size_t i = 0; i < pks.size(); i++)
-        {
-            if (i > 0)
-                writeString(", ", stmt_buf);
-            writeBackQuotedString(pks[i], stmt_buf);
-        }
-        writeString("), '", stmt_buf);
-        writeEscapedString(table_info.serialize(), stmt_buf);
-        writeString(fmt::format("', {})", tombstone), stmt_buf);
+        if (i > 0)
+            writeString(", ", stmt_buf);
+        writeBackQuotedString(pks[i], stmt_buf);
     }
-    else
-    {
-        throw TiFlashException(
-            Errors::DDL::Internal,
-            "Unknown engine type : {}",
-            static_cast<int32_t>(table_info.engine_type));
-    }
+    writeString("), '", stmt_buf);
+    writeEscapedString(table_info.serialize(), stmt_buf);
+    writeString(fmt::format("', {})", tombstone), stmt_buf);
 
     return stmt;
 }
@@ -1133,12 +1122,6 @@ void SchemaBuilder<Getter, NameMapper>::applyCreateStorageInstance(
         return;
     }
     // Else the storage instance does not exist, create it.
-    /// Normal CREATE table.
-    if (table_info->engine_type == StorageEngine::UNSPECIFIED)
-    {
-        auto & tmt_context = context.getTMTContext();
-        table_info->engine_type = tmt_context.getEngineType();
-    }
 
     // We need to create a Storage instance to handle its raft log and snapshot when it
     // is "dropped" but not physically removed in TiDB. To handle it porperly, we get a

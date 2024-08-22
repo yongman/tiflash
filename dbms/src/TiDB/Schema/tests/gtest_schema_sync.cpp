@@ -240,7 +240,7 @@ try
         {"t1", cols, ""},
         {"t2", cols, ""},
     };
-    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS(), "dt");
+    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS());
 
     refreshSchema();
 
@@ -283,7 +283,7 @@ try
         {"t1", cols, ""},
         {"t2", cols, ""},
     };
-    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS(), "dt");
+    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS());
 
     refreshSchema();
     for (auto table_id : table_ids)
@@ -338,7 +338,7 @@ try
     std::vector<std::tuple<String, ColumnsDescription, String>> tables{
         {"t1", cols, ""},
     };
-    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS(), "dt");
+    auto table_ids = MockTiDB::instance().newTables(db_name, tables, pd_client->getTS());
 
     refreshSchema();
     for (auto table_id : table_ids)
@@ -408,7 +408,7 @@ try
     });
 
     MockTiDB::instance().newDataBase(db_name);
-    auto logical_table_id = MockTiDB::instance().newTable(db_name, tbl_name, cols, pd_client->getTS(), "", "dt");
+    auto logical_table_id = MockTiDB::instance().newTable(db_name, tbl_name, cols, pd_client->getTS(), "");
     auto part1_id
         = MockTiDB::instance().newPartition(logical_table_id, "red", pd_client->getTS(), /*is_add_part*/ true);
     auto part2_id
@@ -464,7 +464,7 @@ try
     });
 
     auto db_id = MockTiDB::instance().newDataBase(db_name);
-    auto logical_table_id = MockTiDB::instance().newTable(db_name, tbl_name, cols, pd_client->getTS(), "", "dt");
+    auto logical_table_id = MockTiDB::instance().newTable(db_name, tbl_name, cols, pd_client->getTS(), "");
     auto part1_id
         = MockTiDB::instance().newPartition(logical_table_id, "red", pd_client->getTS(), /*is_add_part*/ true);
     auto part2_id

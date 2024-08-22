@@ -232,8 +232,7 @@ DatabaseID MockTiDB::newDataBase(const String & database_name)
 TiDB::TableInfoPtr MockTiDB::parseColumns(
     const String & tbl_name,
     const ColumnsDescription & columns,
-    const String & handle_pk_name,
-    String engine_type)
+    const String & handle_pk_name)
 {
     TableInfo table_info;
     table_info.name = tbl_name;
@@ -278,7 +277,6 @@ TiDB::TableInfoPtr MockTiDB::parseColumns(
             index_info.id = 1;
             index_info.is_primary = true;
             index_info.idx_name = "PRIMARY";
-            index_info.tbl_name = tbl_name;
             index_info.is_unique = true;
             index_info.index_type = 1;
             index_info.idx_cols.resize(string_tokens.count());
@@ -294,20 +292,6 @@ TiDB::TableInfoPtr MockTiDB::parseColumns(
             table_info.pk_is_handle = true;
     }
 
-    table_info.comment = "Mocked.";
-
-    // set storage engine type
-    std::transform(engine_type.begin(), engine_type.end(), engine_type.begin(), [](unsigned char c) {
-        return std::tolower(c);
-    });
-    if (engine_type == "dt")
-        table_info.engine_type = TiDB::StorageEngine::DT;
-
-    if (table_info.engine_type != TiDB::StorageEngine::DT)
-    {
-        throw Exception("Unknown engine type : " + engine_type + ", must be 'dt'", ErrorCodes::BAD_ARGUMENTS);
-    }
-
     return std::make_shared<TiDB::TableInfo>(std::move(table_info));
 }
 
@@ -316,8 +300,7 @@ TableID MockTiDB::newTable(
     const String & table_name,
     const ColumnsDescription & columns,
     Timestamp tso,
-    const String & handle_pk_name,
-    const String & engine_type)
+    const String & handle_pk_name)
 {
     std::lock_guard lock(tables_mutex);
 
@@ -332,7 +315,7 @@ TableID MockTiDB::newTable(
         throw Exception("MockTiDB not found db: " + database_name, ErrorCodes::LOGICAL_ERROR);
     }
 
-    auto table_info = parseColumns(table_name, columns, handle_pk_name, engine_type);
+    auto table_info = parseColumns(table_name, columns, handle_pk_name);
     table_info->id = table_id_allocator++;
     table_info->update_timestamp = tso;
     return addTable(database_name, std::move(*table_info));
@@ -341,8 +324,7 @@ TableID MockTiDB::newTable(
 std::vector<TableID> MockTiDB::newTables(
     const String & database_name,
     const std::vector<std::tuple<String, ColumnsDescription, String>> & tables,
-    Timestamp tso,
-    const String & engine_type)
+    Timestamp tso)
 {
     std::lock_guard lock(tables_mutex);
     std::vector<TableID> table_ids;
@@ -363,7 +345,7 @@ std::vector<TableID> MockTiDB::newTables(
             throw Exception("Mock TiDB table " + qualified_name + " already exists", ErrorCodes::TABLE_ALREADY_EXISTS);
         }
 
-        auto table_info = *parseColumns(table_name, columns, handle_pk_name, engine_type);
+        auto table_info = *parseColumns(table_name, columns, handle_pk_name);
         table_info.id = table_id_allocator++;
         table_info.update_timestamp = tso;
 
