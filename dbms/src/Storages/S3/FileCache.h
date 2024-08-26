@@ -259,7 +259,7 @@ public:
         const std::optional<UInt64> & filesize = std::nullopt);
 
     void bgDownload(const String & s3_key, FileSegmentPtr & file_seg);
-    void fgDownload(std::unique_lock<std::mutex> & cache_lock, const String & s3_key, FileSegmentPtr & file_seg);
+    void fgDownload(const String & s3_key, FileSegmentPtr & file_seg);
     void download(const String & s3_key, FileSegmentPtr & file_seg);
     void downloadImpl(const String & s3_key, FileSegmentPtr & file_seg);
 
@@ -276,7 +276,6 @@ public:
     void restoreTable(const std::filesystem::directory_entry & table_entry);
     void restoreDMFile(const std::filesystem::directory_entry & dmfile_entry);
 
-    void remove(std::unique_lock<std::mutex> & cache_lock, const String & s3_key, bool force = false);
     void remove(const String & s3_key, bool force = false);
     std::pair<Int64, std::list<String>::iterator> removeImpl(
         LRUFileTable & table,

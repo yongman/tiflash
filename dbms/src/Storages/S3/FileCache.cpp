@@ -291,7 +291,7 @@ FileSegmentPtr FileCache::getOrWait(const S3::S3FilenameView & s3_fname, const s
     lock.unlock();
 
     PerfContext::file_cache.fg_download_from_s3++;
-    fgDownload(lock, s3_key, file_seg);
+    fgDownload(s3_key, file_seg);
     if (!file_seg || !file_seg->isReadyToRead())
         throw Exception( //
             ErrorCodes::S3_ERROR,
@@ -338,20 +338,16 @@ void FileCache::removeDiskFile(const String & local_fname, bool update_fsize_met
     }
 }
 
-void FileCache::remove(std::unique_lock<std::mutex> &, const String & s3_key, bool force)
+void FileCache::remove(const String & s3_key, bool force)
 {
     auto file_type = getFileType(s3_key);
     auto & table = tables[static_cast<UInt64>(file_type)];
+
+    std::unique_lock lock(mtx);
     auto f = table.get(s3_key, /*update_lru*/ false);
     if (f == nullptr)
         return;
     std::ignore = removeImpl(table, s3_key, f, force);
-}
-
-void FileCache::remove(const String & s3_key, bool force)
-{
-    std::unique_lock lock(mtx);
-    remove(lock, s3_key, force);
 }
 
 std::pair<Int64, std::list<String>::iterator> FileCache::removeImpl(
@@ -789,7 +785,7 @@ void FileCache::bgDownload(const String & s3_key, FileSegmentPtr & file_seg)
         [this, s3_key = s3_key, file_seg = file_seg]() mutable { download(s3_key, file_seg); });
 }
 
-void FileCache::fgDownload(std::unique_lock<std::mutex> & cache_lock, const String & s3_key, FileSegmentPtr & file_seg)
+void FileCache::fgDownload(const String & s3_key, FileSegmentPtr & file_seg)
 {
     SYNC_FOR("FileCache::fgDownload"); // simulate long s3 download
 
@@ -809,7 +805,7 @@ void FileCache::fgDownload(std::unique_lock<std::mutex> & cache_lock, const Stri
         file_seg->setStatus(FileSegment::Status::Failed);
         GET_METRIC(tiflash_storage_remote_cache, type_dtfile_download_failed).Increment();
         file_seg.reset();
-        remove(cache_lock, s3_key);
+        remove(s3_key);
     }
 
     LOG_DEBUG(

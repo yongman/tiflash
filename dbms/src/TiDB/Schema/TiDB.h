@@ -335,6 +335,8 @@ struct IndexInfo
     bool is_primary = false;
     bool is_invisible = false;
     bool is_global = false;
+
+    VectorIndexDefinitionPtr vector_index = nullptr;
 };
 
 struct TableInfo
@@ -404,9 +406,7 @@ struct TableInfo
     }
 
     /// should not be called if is_common_handle = false.
-    const IndexInfo & getPrimaryIndexInfo() const { return index_infos[0]; }
-
-    IndexInfo & getPrimaryIndexInfo() { return index_infos[0]; }
+    const IndexInfo & getPrimaryIndexInfo() const;
 };
 
 using DBInfoPtr = std::shared_ptr<DBInfo>;
