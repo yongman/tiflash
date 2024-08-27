@@ -46,8 +46,9 @@ Float64 VectorFloat32Ref::l2SquaredDistance(VectorFloat32Ref b) const
     checkDims(b);
 
     static simsimd_metric_punned_t metric = nullptr;
-    if (metric == nullptr)
-    {
+    static std::once_flag init_flag;
+
+    std::call_once(init_flag, []() {
         simsimd_capability_t used_capability;
         simsimd_find_metric_punned(
             simsimd_metric_l2sq_k,
@@ -56,9 +57,10 @@ Float64 VectorFloat32Ref::l2SquaredDistance(VectorFloat32Ref b) const
             simsimd_cap_any_k,
             &metric,
             &used_capability);
-        if (!metric)
-            return std::numeric_limits<double>::quiet_NaN();
-    }
+    });
+
+    if (!metric)
+        return std::numeric_limits<double>::quiet_NaN();
 
     simsimd_distance_t distance;
     metric(elements, b.elements, elements_n, &distance);
@@ -71,8 +73,9 @@ Float64 VectorFloat32Ref::innerProduct(VectorFloat32Ref b) const
     checkDims(b);
 
     static simsimd_metric_punned_t metric = nullptr;
-    if (metric == nullptr)
-    {
+    static std::once_flag init_flag;
+
+    std::call_once(init_flag, []() {
         simsimd_capability_t used_capability;
         simsimd_find_metric_punned(
             simsimd_metric_dot_k,
@@ -81,9 +84,10 @@ Float64 VectorFloat32Ref::innerProduct(VectorFloat32Ref b) const
             simsimd_cap_any_k,
             &metric,
             &used_capability);
-        if (!metric)
-            return std::numeric_limits<double>::quiet_NaN();
-    }
+    });
+
+    if (!metric)
+        return std::numeric_limits<double>::quiet_NaN();
 
     simsimd_distance_t distance;
     metric(elements, b.elements, elements_n, &distance);
@@ -96,8 +100,9 @@ Float64 VectorFloat32Ref::cosineDistance(VectorFloat32Ref b) const
     checkDims(b);
 
     static simsimd_metric_punned_t metric = nullptr;
-    if (metric == nullptr)
-    {
+    static std::once_flag init_flag;
+
+    std::call_once(init_flag, []() {
         simsimd_capability_t used_capability;
         simsimd_find_metric_punned(
             simsimd_metric_cos_k,
@@ -106,9 +111,10 @@ Float64 VectorFloat32Ref::cosineDistance(VectorFloat32Ref b) const
             simsimd_cap_any_k,
             &metric,
             &used_capability);
-        if (!metric)
-            return std::numeric_limits<double>::quiet_NaN();
-    }
+    });
+
+    if (!metric)
+        return std::numeric_limits<double>::quiet_NaN();
 
     simsimd_distance_t distance;
     metric(elements, b.elements, elements_n, &distance);
