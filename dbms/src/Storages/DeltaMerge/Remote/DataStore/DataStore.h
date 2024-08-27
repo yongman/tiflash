@@ -32,7 +32,7 @@ public:
     /**
      * Restores into a DMFile object. This token will be kept valid when DMFile is valid.
      */
-    virtual DMFilePtr restore(DMFileMeta::ReadMode read_mode, UInt32 meta_version) = 0;
+    virtual DMFilePtr restore(DMFileMeta::ReadMode read_mode, UInt64 meta_version) = 0;
 
 protected:
     // These should be the required information for any kind of DataStore.

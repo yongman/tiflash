@@ -118,7 +118,7 @@ DMFilePtr DMFile::restore(
     UInt64 page_id,
     const String & parent_path,
     const DMFileMeta::ReadMode & read_meta_mode,
-    UInt32 meta_version)
+    UInt64 meta_version)
 {
     auto is_s3_file = S3::S3FilenameView::fromKeyWithPrefix(parent_path).isDataFile();
     if (!is_s3_file)

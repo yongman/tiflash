@@ -20,7 +20,7 @@
 #include <Storages/DeltaMerge/DMChecksumConfig.h>
 #include <Storages/DeltaMerge/File/DMFileUtil.h>
 #include <Storages/DeltaMerge/File/MergedFile.h>
-#include <Storages/DeltaMerge/File/dtpb/dmfile.pb.h>
+#include <Storages/DeltaMerge/dtpb/dmfile.pb.h>
 #include <common/types.h>
 
 namespace DB::DM
@@ -176,7 +176,7 @@ public:
         const FileProviderPtr & file_provider,
         const WriteLimiterPtr & write_limiter);
     virtual String metaPath() const { return subFilePath(metaFileName()); }
-    virtual UInt32 metaVersion() const { return 0; }
+    virtual UInt64 metaVersion() const { return 0; }
     /**
      * @brief metaVersion += 1. Returns the new meta version.
      * This is only supported in MetaV2.

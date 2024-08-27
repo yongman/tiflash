@@ -14,20 +14,16 @@
 
 #include <Interpreters/Context.h>
 #include <Interpreters/SharedContexts/Disagg.h>
-#include <Storages/DeltaMerge/DMContext.h>
 #include <Storages/DeltaMerge/DMVersionFilterBlockInputStream.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
 #include <Storages/DeltaMerge/Filter/FilterHelper.h>
 #include <Storages/DeltaMerge/Remote/DataStore/DataStore.h>
+#include <Storages/DeltaMerge/RestoreDMFile.h>
 #include <Storages/DeltaMerge/RowKeyFilter.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
 #include <Storages/DeltaMerge/StableValueSpace.h>
-#include <Storages/DeltaMerge/StoragePool/StoragePool.h>
-#include <Storages/DeltaMerge/WriteBatchesImpl.h>
-#include <Storages/Page/V3/Universal/UniversalPageIdFormatImpl.h>
 #include <Storages/Page/V3/Universal/UniversalPageStorage.h>
-#include <Storages/PathPool.h>
 
 
 namespace DB
@@ -196,41 +192,9 @@ StableValueSpacePtr StableValueSpace::restore(DMContext & context, ReadBuffer & 
     {
         UInt64 page_id = metapb.files(i).page_id();
         UInt64 meta_version = metapb.files(i).meta_version();
-
-        DMFilePtr dmfile;
-        auto path_delegate = context.path_pool->getStableDiskDelegator();
-        if (remote_data_store)
-        {
-            auto wn_ps = context.db_context.getWriteNodePageStorage();
-            auto full_page_id = UniversalPageIdFormat::toFullPageId(
-                UniversalPageIdFormat::toFullPrefix(context.keyspace_id, StorageType::Data, context.physical_table_id),
-                page_id);
-            auto full_external_id = wn_ps->getNormalPageId(full_page_id);
-            auto local_external_id = UniversalPageIdFormat::getU64ID(full_external_id);
-            auto remote_data_location = wn_ps->getCheckpointLocation(full_page_id);
-            const auto & lock_key_view = S3::S3FilenameView::fromKey(*(remote_data_location->data_file_id));
-            auto file_oid = lock_key_view.asDataFile().getDMFileOID();
-            RUNTIME_CHECK(file_oid.keyspace_id == context.keyspace_id);
-            RUNTIME_CHECK(file_oid.table_id == context.physical_table_id);
-            auto prepared = remote_data_store->prepareDMFile(file_oid, page_id);
-            dmfile = prepared->restore(DMFileMeta::ReadMode::all(), meta_version);
-            // gc only begin to run after restore so we can safely call addRemoteDTFileIfNotExists here
-            path_delegate.addRemoteDTFileIfNotExists(local_external_id, dmfile->getBytesOnDisk());
-        }
-        else
-        {
-            auto file_id = context.storage_pool->dataReader()->getNormalPageId(page_id);
-            auto file_parent_path = path_delegate.getDTFilePath(file_id);
-            dmfile = DMFile::restore(
-                context.db_context.getFileProvider(),
-                file_id,
-                page_id,
-                file_parent_path,
-                DMFileMeta::ReadMode::all(),
-                meta_version);
-            auto res = path_delegate.updateDTFileSize(file_id, dmfile->getBytesOnDisk());
-            RUNTIME_CHECK_MSG(res, "update dt file size failed, path={}", dmfile->path());
-        }
+        auto dmfile = remote_data_store
+            ? restoreDMFileFromRemoteDataSource(context, remote_data_store, page_id, meta_version)
+            : restoreDMFileFromLocal(context, page_id, meta_version);
         stable->files.push_back(dmfile);
     }
 
@@ -262,27 +226,7 @@ StableValueSpacePtr StableValueSpace::createFromCheckpoint( //
     {
         UInt64 page_id = metapb.files(i).page_id();
         UInt64 meta_version = metapb.files(i).meta_version();
-
-        auto full_page_id = UniversalPageIdFormat::toFullPageId(
-            UniversalPageIdFormat::toFullPrefix(context.keyspace_id, StorageType::Data, context.physical_table_id),
-            page_id);
-        auto remote_data_location = temp_ps->getCheckpointLocation(full_page_id);
-        auto data_key_view = S3::S3FilenameView::fromKey(*(remote_data_location->data_file_id)).asDataFile();
-        auto file_oid = data_key_view.getDMFileOID();
-        auto data_key = data_key_view.toFullKey();
-        auto delegator = context.path_pool->getStableDiskDelegator();
-        auto new_local_page_id = context.storage_pool->newDataPageIdForDTFile(delegator, __PRETTY_FUNCTION__);
-        PS::V3::CheckpointLocation loc{
-            .data_file_id = std::make_shared<String>(data_key),
-            .offset_in_file = 0,
-            .size_in_file = 0,
-        };
-        wbs.data.putRemoteExternal(new_local_page_id, loc);
-        auto prepared = remote_data_store->prepareDMFile(file_oid, new_local_page_id);
-        auto dmfile = prepared->restore(DMFileMeta::ReadMode::all(), meta_version);
-        wbs.writeLogAndData();
-        // new_local_page_id is already applied to PageDirectory so we can safely call addRemoteDTFileIfNotExists here
-        delegator.addRemoteDTFileIfNotExists(new_local_page_id, dmfile->getBytesOnDisk());
+        auto dmfile = restoreDMFileFromCheckpoint(context, remote_data_store, temp_ps, wbs, page_id, meta_version);
         stable->files.push_back(dmfile);
     }
 

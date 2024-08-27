@@ -66,7 +66,7 @@ public:
         UInt64 page_id,
         const String & parent_path,
         const DMFileMeta::ReadMode & read_meta_mode,
-        UInt32 meta_version);
+        UInt64 meta_version);
 
     static String info(const DMFiles & dm_files);
 
@@ -176,8 +176,8 @@ public:
     std::vector<String> listFilesForUpload() const;
     void switchToRemote(const S3::DMFileOID & oid) const;
 
-    UInt32 metaVersion() const { return meta->metaVersion(); }
-    UInt32 bumpMetaVersion() const { return meta->bumpMetaVersion(); }
+    UInt64 metaVersion() const { return meta->metaVersion(); }
+    UInt64 bumpMetaVersion() const { return meta->bumpMetaVersion(); }
 
 #ifndef DBMS_PUBLIC_GTEST
 private:
@@ -221,7 +221,7 @@ public:
 
     // Do not gc me.
     String ngcPath() const;
-    String metav2Path(UInt32 meta_version) const { return subFilePath(DMFileMetaV2::metaFileName(meta_version)); }
+    String metav2Path(UInt64 meta_version) const { return subFilePath(DMFileMetaV2::metaFileName(meta_version)); }
     UInt64 getReadFileSize(ColId col_id, const String & filename) const
     {
         return meta->getReadFileSize(col_id, filename);
