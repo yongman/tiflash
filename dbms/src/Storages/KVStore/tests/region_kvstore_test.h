@@ -93,5 +93,9 @@ static inline void validateSSTGeneration(
     ASSERT_EQ(counter, key_count);
 }
 
+ASTPtr parseCreateStatement(const String & statement);
+TableID createDBAndTable(String db_name, String table_name);
+void dropDataBase(String db_name);
+
 } // namespace tests
 } // namespace DB
