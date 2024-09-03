@@ -46,10 +46,10 @@ public:
     {
         std::vector<PageIdU64> file_ids;
         size_t estimated_memory_bytes = 0;
-        IndexInfosPtr indexes_to_build;
+        LocalIndexInfosPtr indexes_to_build;
     };
 
-    static LocalIndexBuildInfo getLocalIndexBuildInfo(const IndexInfosPtr & index_infos, const DMFiles & dm_files);
+    static LocalIndexBuildInfo getLocalIndexBuildInfo(const LocalIndexInfosPtr & index_infos, const DMFiles & dm_files);
 
     struct Options
     {
@@ -57,7 +57,7 @@ public:
         const FileProviderPtr file_provider;
         const WriteLimiterPtr write_limiter;
         const SharedContextDisaggPtr disagg_ctx;
-        const IndexInfosPtr index_infos;
+        const LocalIndexInfosPtr index_infos;
         const DMFiles dm_files;
         const Context & db_context;
         const bool is_common_handle;

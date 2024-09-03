@@ -180,6 +180,7 @@ struct LocalIndexStats
 {
     String column_name{};
     UInt64 column_id{};
+    UInt64 index_id{};
     String index_kind{};
 
     UInt64 rows_stable_indexed{}; // Total rows
@@ -298,7 +299,7 @@ private:
         const ColumnDefine & handle,
         bool is_common_handle_,
         size_t rowkey_column_size_,
-        IndexInfosPtr local_index_infos_,
+        LocalIndexInfosPtr local_index_infos_,
         const Settings & settings_ = EMPTY_SETTINGS,
         ThreadPool * thread_pool = nullptr);
 
@@ -316,7 +317,7 @@ public:
         const ColumnDefine & handle,
         bool is_common_handle_,
         size_t rowkey_column_size_,
-        IndexInfosPtr local_index_infos_,
+        LocalIndexInfosPtr local_index_infos_,
         const Settings & settings_ = EMPTY_SETTINGS,
         ThreadPool * thread_pool = nullptr);
 
@@ -713,7 +714,7 @@ private:
 
     void segmentEnsureStableIndex(
         DMContext & dm_context,
-        const IndexInfosPtr & index_info,
+        const LocalIndexInfosPtr & index_info,
         const DMFiles & dm_files,
         const String & source_segment_info);
 
@@ -856,6 +857,15 @@ private:
         const SegmentPtr & old_segment,
         const SegmentPtr & new_segment);
 
+    // Get a snap of local_index_infos to check whether any new index is created.
+    LocalIndexInfosPtr getLocalIndexInfosSnapshot() const
+    {
+        std::shared_lock index_read_lock(mtx_local_index_infos);
+        if (!local_index_infos || local_index_infos->empty())
+            return nullptr;
+        return std::make_shared<LocalIndexInfos>(*local_index_infos);
+    }
+
     /**
      * Check whether there are new local indexes should be built for all segments.
      */
@@ -944,7 +954,8 @@ public:
     // Some indexes are built in TiFlash locally. For example, Vector Index.
     // Compares to the lightweight RoughSet Indexes, these indexes require lot
     // of resources to build, so they will be built in separated background pool.
-    IndexInfosPtr local_index_infos;
+    LocalIndexInfosPtr local_index_infos;
+    mutable std::shared_mutex mtx_local_index_infos;
 
     struct DMFileIDToSegmentIDs
     {
