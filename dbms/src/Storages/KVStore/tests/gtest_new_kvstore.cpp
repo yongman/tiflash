@@ -31,7 +31,6 @@
 
 #include <limits>
 
-
 namespace DB::tests
 {
 
