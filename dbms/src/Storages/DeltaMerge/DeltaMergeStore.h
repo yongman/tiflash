@@ -575,6 +575,18 @@ public:
         bool keep_order,
         const PushDownFilterPtr & filter);
 
+    // Get a snap of local_index_infos for checking.
+    // Note that this is just a shallow copy of `local_index_infos`, do not
+    // modify the local indexes inside the snapshot.
+    LocalIndexInfosSnapshot getLocalIndexInfosSnapshot() const
+    {
+        std::shared_lock index_read_lock(mtx_local_index_infos);
+        if (!local_index_infos || local_index_infos->empty())
+            return nullptr;
+        // only make a shallow copy on the shared_ptr is OK
+        return local_index_infos;
+    }
+
 public:
     /// Methods mainly used by region split.
 
@@ -856,18 +868,6 @@ private:
         const SegmentPtr & old_segment,
         const SegmentPtr & new_segment);
 
-    // Get a snap of local_index_infos for checking.
-    // Note that this is just a shallow copy of `local_index_infos`, do not
-    // modify the local indexes inside the snapshot.
-    LocalIndexInfosSnapshot getLocalIndexInfosSnapshot() const
-    {
-        std::shared_lock index_read_lock(mtx_local_index_infos);
-        if (!local_index_infos || local_index_infos->empty())
-            return nullptr;
-        // only make a shallow copy on the shared_ptr is OK
-        return local_index_infos;
-    }
-
     /**
      * Check whether there are new local indexes should be built for all segments.
      */
@@ -887,6 +887,9 @@ private:
 #else
 public:
 #endif
+
+    void applyLocalIndexChange(const TiDB::TableInfo & new_table_info);
+
     /**
      * Wait until the segment has stable index.
      * If the index is ready or no need to build, it will return immediately.
