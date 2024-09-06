@@ -136,6 +136,14 @@ private:
         const DM::Remote::RNReadTaskPtr & read_task,
         size_t num_streams);
 
+    BlockInputStreams readThroughProxy(const Context & db_context, unsigned num_streams);
+    void readThroughProxy(
+        PipelineExecutorContext & exec_context,
+        PipelineExecGroupBuilder & group_builder,
+        const Context & db_context,
+        unsigned num_streams);
+
+
 private:
     using RemoteTableRange = std::pair<TableID, pingcap::coprocessor::KeyRanges>;
     std::tuple<std::vector<RemoteTableRange>, UInt64> buildRemoteTableRanges();
@@ -183,4 +191,47 @@ private:
 
     std::unique_ptr<DAGExpressionAnalyzer> analyzer;
 };
+
+class RNProxyReader : boost::noncopyable
+{
+public:
+    static RNProxyReaderPtr createProxyReader(
+        const LoggerPtr & log,
+        const Context & db_context,
+        TableID physical_table_id,
+        RegionID region_id,
+        RegionVersion region_ver,
+        UInt64 start_ts,
+        const TiDBTableScan & table_scan);
+
+    void initInputStream(const DM::ColumnDefines & columns_to_read, UInt64 read_tso);
+
+    BlockInputStreamPtr getInputStream() const
+    {
+        RUNTIME_CHECK(input_stream != nullptr);
+        return input_stream;
+    }
+
+private:
+    BlockInputStreamPtr input_stream;
+};
+using RNProxyReaderPtr = std::shared_ptr<RNProxyReader>;
+
+class RNProxyReadTask : boost::noncopyable
+{
+public:
+    const std::vector<RNProxyReaderPtr> proxy_readers;
+
+    static RNProxyReadTaskPtr create(const std::vector<RNProxyReaderPtr> & proxy_readers)
+    {
+        return std::shared_ptr<RNProxyReadTask>(new RNProxyReadTask(proxy_readers));
+    }
+
+private:
+    RNProxyReadTask(const std::vector<RNProxyReaderPtr> & proxy_readers)
+        : proxy_readers(proxy_readers)
+    {}
+};
+
+using RNProxyReadTaskPtr = std::shared_ptr<RNProxyReadTask>;
 } // namespace DB

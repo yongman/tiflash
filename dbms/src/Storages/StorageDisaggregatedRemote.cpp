@@ -42,6 +42,8 @@
 #include <Storages/DeltaMerge/Remote/RNSegmentSourceOp.h>
 #include <Storages/DeltaMerge/Remote/RNWorkers.h>
 #include <Storages/KVStore/Decode/DecodingStorageSchemaSnapshot.h>
+#include <Storages/KVStore/FFI/ProxyFFI.h>
+#include <Storages/KVStore/KVStore.h>
 #include <Storages/KVStore/TMTContext.h>
 #include <Storages/KVStore/Types.h>
 #include <Storages/SelectQueryInfo.h>
@@ -619,4 +621,44 @@ void StorageDisaggregated::buildRemoteSegmentSourceOps(
         group_builder.getCurProfileInfos());
 }
 
+BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & db_context, unsigned num_streams) {}
+
+void StorageDisaggregated::readThroughProxy(
+    PipelineExecutorContext & exec_context,
+    PipelineExecGroupBuilder & group_builder,
+    const Context & db_context,
+    unsigned num_streams)
+{}
+
+
+RNProxyReaderPtr RNProxyReader::createProxyReader(
+    const LoggerPtr & log,
+    const Context & db_context,
+    TableID physical_table_id,
+    RegionID region_id,
+    RegionVersion region_ver,
+    UInt64 start_ts,
+    const TiDBTableScan & table_scan)
+{
+    bool is_partition_scan = table_scan->tp() == tipb::TypePartitionTableScan;
+    auto table_scan_pb = table_scan.getTableScanPB();
+    tipb::TableInfo table_info;
+    if (is_partition_scan)
+    {
+        table_info.add_columns(table_scan.tbl_scan().columns());
+    }
+    else
+    {
+        table_info.add_columns(table_scan.partition_table_scan().columns());
+    }
+    table_info.set_table_id(physical_table_id);
+    BaseBuffView columns = table_info.SerializeAsString();
+
+    // Convert columns in table_scan and marshal it to string
+
+    const TiFlashRaftProxyHelper * proxy_helper = db_context.getTMTContext().getKVStore()->getProxyHelper();
+    ColumnarReaderPtr columnar_reader
+        = proxy_helper->cloud_storage_engine_interfaces
+              .fn_get_columnar_reader(region_id, region_ver, start_ts, columns, proxy_helper->proxy_ptr);
+}
 } // namespace DB
