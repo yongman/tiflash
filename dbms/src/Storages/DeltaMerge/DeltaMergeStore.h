@@ -178,7 +178,6 @@ struct StoreStats
 
 struct LocalIndexStats
 {
-    String column_name{};
     UInt64 column_id{};
     UInt64 index_id{};
     String index_kind{};
@@ -857,13 +856,16 @@ private:
         const SegmentPtr & old_segment,
         const SegmentPtr & new_segment);
 
-    // Get a snap of local_index_infos to check whether any new index is created.
-    LocalIndexInfosPtr getLocalIndexInfosSnapshot() const
+    // Get a snap of local_index_infos for checking.
+    // Note that this is just a shallow copy of `local_index_infos`, do not
+    // modify the local indexes inside the snapshot.
+    LocalIndexInfosSnapshot getLocalIndexInfosSnapshot() const
     {
         std::shared_lock index_read_lock(mtx_local_index_infos);
         if (!local_index_infos || local_index_infos->empty())
             return nullptr;
-        return std::make_shared<LocalIndexInfos>(*local_index_infos);
+        // only make a shallow copy on the shared_ptr is OK
+        return local_index_infos;
     }
 
     /**

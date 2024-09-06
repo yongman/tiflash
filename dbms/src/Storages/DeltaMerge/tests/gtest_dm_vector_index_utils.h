@@ -64,7 +64,7 @@ public:
         return wb.str();
     }
 
-    ColumnDefine cdVec()
+    ColumnDefine cdVec() const
     {
         // When used in read, no need to assign vector_index.
         return ColumnDefine(vec_column_id, vec_column_name, ::DB::tests::typeFromString("Array(Float32)"));
@@ -80,8 +80,8 @@ public:
         const LocalIndexInfos index_infos = LocalIndexInfos{
             LocalIndexInfo{
                 .type = IndexType::Vector,
+                .index_id = EmptyIndexID,
                 .column_id = vec_column_id,
-                .column_name = "",
                 .index_definition = std::make_shared<TiDB::VectorIndexDefinition>(definition),
             },
         };

@@ -14,9 +14,12 @@
 
 #pragma once
 
+#include <DataTypes/IDataType.h>
+#include <IO/WriteHelpers.h>
 #include <Poco/File.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/File/DMFileMetaV2.h>
+#include <Storages/DeltaMerge/File/DMFileUtil.h>
 #include <Storages/DeltaMerge/File/DMFileV3IncrementWriter_fwd.h>
 #include <Storages/DeltaMerge/File/dtpb/dmfile.pb.h>
 #include <Storages/FormatVersion.h>
@@ -126,8 +129,6 @@ public:
     size_t getPacks() const { return meta->pack_stats.size(); }
     const DMFileMeta::PackStats & getPackStats() const { return meta->pack_stats; }
     const DMFileMeta::PackProperties & getPackProperties() const { return meta->pack_properties; }
-    const ColumnStats & getColumnStats() const { return meta->column_stats; }
-    const std::unordered_set<ColId> & getColumnIndices() const { return meta->column_indices; }
 
     // only used in gtest
     void clearPackProperties() const { meta->pack_properties.clear_property(); }
@@ -141,6 +142,29 @@ public:
         throw Exception("Column [" + DB::toString(col_id) + "] not found in dm file [" + path() + "]");
     }
     bool isColumnExist(ColId col_id) const { return meta->column_stats.contains(col_id); }
+
+    std::tuple<DMFileMeta::LocalIndexState, size_t> getLocalIndexState(ColId col_id, IndexID index_id) const
+    {
+        return meta->getLocalIndexState(col_id, index_id);
+    }
+
+    // Check whether the local index of given col_id and index_id has been built on this dmfile.
+    // Return false if
+    // - the col_id is not exist in the dmfile
+    // - the index has not been built
+    bool isLocalIndexExist(ColId col_id, IndexID index_id) const
+    {
+        return std::get<0>(meta->getLocalIndexState(col_id, index_id)) == DMFileMeta::LocalIndexState::IndexBuilt;
+    }
+
+    // Try to get the local index of given col_id and index_id.
+    // Return std::nullopt if
+    // - the col_id is not exist in the dmfile
+    // - the index has not been built
+    std::optional<dtpb::VectorIndexFileProps> getLocalIndex(ColId col_id, IndexID index_id) const
+    {
+        return meta->getLocalIndex(col_id, index_id);
+    }
 
     /*
      * TODO: This function is currently unused. We could use it when:
@@ -177,7 +201,6 @@ public:
     void switchToRemote(const S3::DMFileOID & oid) const;
 
     UInt64 metaVersion() const { return meta->metaVersion(); }
-    UInt64 bumpMetaVersion() const { return meta->bumpMetaVersion(); }
 
 #ifndef DBMS_PUBLIC_GTEST
 private:
@@ -272,6 +295,9 @@ public:
     {
         return IDataType::getFileNameForStream(DB::toString(col_id), substream);
     }
+
+    static String vectorIndexFileName(IndexID index_id) { return fmt::format("idx_{}.vector", index_id); }
+    String vectorIndexPath(IndexID index_id) const { return subFilePath(vectorIndexFileName(index_id)); }
 
     void addPack(const DMFileMeta::PackStat & pack_stat) const { meta->pack_stats.push_back(pack_stat); }
 

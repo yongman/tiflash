@@ -22,6 +22,7 @@
 #include <Storages/DeltaMerge/BitmapFilter/BitmapFilterView.h>
 #include <Storages/DeltaMerge/File/dtpb/dmfile.pb.h>
 #include <Storages/DeltaMerge/Index/VectorIndex_fwd.h>
+#include <Storages/KVStore/Types.h>
 #include <TiDB/Schema/VectorIndex.h>
 
 namespace DB::DM
@@ -37,13 +38,14 @@ public:
     using ProceedCheckFn = std::function<bool()>;
 
 public:
-    static VectorIndexBuilderPtr create(const TiDB::VectorIndexDefinitionPtr & definition);
+    static VectorIndexBuilderPtr create(IndexID index_id, const TiDB::VectorIndexDefinitionPtr & definition);
 
     static bool isSupportedType(const IDataType & type);
 
 public:
-    explicit VectorIndexBuilder(const TiDB::VectorIndexDefinitionPtr & definition_)
-        : definition(definition_)
+    explicit VectorIndexBuilder(IndexID index_id_, const TiDB::VectorIndexDefinitionPtr & definition_)
+        : index_id(index_id_)
+        , definition(definition_)
     {}
 
     virtual ~VectorIndexBuilder() = default;
@@ -57,6 +59,7 @@ public:
     virtual void save(std::string_view path) const = 0;
 
 public:
+    const IndexID index_id;
     const TiDB::VectorIndexDefinitionPtr definition;
 };
 

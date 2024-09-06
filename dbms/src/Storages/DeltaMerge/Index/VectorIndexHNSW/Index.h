@@ -29,7 +29,7 @@ class VectorIndexHNSWBuilder : public VectorIndexBuilder
 public:
     static tipb::VectorIndexKind kind();
 
-    explicit VectorIndexHNSWBuilder(const TiDB::VectorIndexDefinitionPtr & definition_);
+    explicit VectorIndexHNSWBuilder(IndexID index_id_, const TiDB::VectorIndexDefinitionPtr & definition_);
 
     ~VectorIndexHNSWBuilder() override;
 
@@ -57,7 +57,7 @@ public:
     ~VectorIndexHNSWViewer() override;
 
     std::vector<Key> search( //
-        const ANNQueryInfoPtr & queryInfo,
+        const ANNQueryInfoPtr & query_info,
         const RowFilter & valid_rows) const override;
 
     size_t size() const override;

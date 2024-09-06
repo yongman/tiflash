@@ -650,6 +650,10 @@ FileType FileCache::getFileType(const String & fname)
     {
         return getFileTypeOfColData(p.stem());
     }
+    else if (ext == ".vector")
+    {
+        return FileType::VectorIndex;
+    }
     else if (ext == ".meta")
     {
         // Example: v1.meta

@@ -57,8 +57,8 @@ unum::usearch::metric_kind_t getUSearchMetricKind(tipb::VectorDistanceMetric d)
     }
 }
 
-VectorIndexHNSWBuilder::VectorIndexHNSWBuilder(const TiDB::VectorIndexDefinitionPtr & definition_)
-    : VectorIndexBuilder(definition_)
+VectorIndexHNSWBuilder::VectorIndexHNSWBuilder(IndexID index_id_, const TiDB::VectorIndexDefinitionPtr & definition_)
+    : VectorIndexBuilder(index_id_, definition_)
     , index(USearchImplType::make(unum::usearch::metric_punned_t( //
           definition_->dimension,
           getUSearchMetricKind(definition->distance_metric))))
@@ -134,7 +134,7 @@ void VectorIndexHNSWBuilder::save(std::string_view path) const
     SCOPE_EXIT({ total_duration += w.elapsedSeconds(); });
 
     auto result = index.save(unum::usearch::output_file_t(path.data()));
-    RUNTIME_CHECK_MSG(result, "Failed to save vector index: {}", result.error.what());
+    RUNTIME_CHECK_MSG(result, "Failed to save vector index: {} path={}", result.error.what(), path);
 }
 
 VectorIndexHNSWBuilder::~VectorIndexHNSWBuilder()
@@ -177,7 +177,12 @@ VectorIndexViewerPtr VectorIndexHNSWViewer::view(const dtpb::VectorIndexFileProp
     vi->index.reserve(limit);
 
     auto result = vi->index.view(unum::usearch::memory_mapped_file_t(path.data()));
-    RUNTIME_CHECK_MSG(result, "Failed to load vector index: {}", result.error.what());
+    RUNTIME_CHECK_MSG(
+        result,
+        "Failed to load vector index: {} props={} path={}",
+        result.error.what(),
+        file_props.ShortDebugString(),
+        path);
 
     auto current_memory_usage = vi->index.memory_usage();
     GET_METRIC(tiflash_vector_index_memory_usage, type_view).Increment(static_cast<double>(current_memory_usage));
@@ -187,26 +192,30 @@ VectorIndexViewerPtr VectorIndexHNSWViewer::view(const dtpb::VectorIndexFileProp
 }
 
 std::vector<VectorIndexBuilder::Key> VectorIndexHNSWViewer::search(
-    const ANNQueryInfoPtr & queryInfo,
+    const ANNQueryInfoPtr & query_info,
     const RowFilter & valid_rows) const
 {
-    RUNTIME_CHECK(queryInfo->ref_vec_f32().size() >= sizeof(UInt32));
-    auto query_vec_size = readLittleEndian<UInt32>(queryInfo->ref_vec_f32().data());
+    RUNTIME_CHECK(query_info->ref_vec_f32().size() >= sizeof(UInt32));
+    auto query_vec_size = readLittleEndian<UInt32>(query_info->ref_vec_f32().data());
     if (query_vec_size != file_props.dimensions())
         throw Exception(
             ErrorCodes::INCORRECT_QUERY,
-            "Query vector size {} does not match index dimensions {}",
+            "Query vector size {} does not match index dimensions {}, index_id={} column_id={}",
             query_vec_size,
-            file_props.dimensions());
+            file_props.dimensions(),
+            query_info->index_id(),
+            query_info->column_id());
 
-    RUNTIME_CHECK(queryInfo->ref_vec_f32().size() >= sizeof(UInt32) + query_vec_size * sizeof(Float32));
+    RUNTIME_CHECK(query_info->ref_vec_f32().size() >= sizeof(UInt32) + query_vec_size * sizeof(Float32));
 
-    if (tipb::VectorDistanceMetric_Name(queryInfo->distance_metric()) != file_props.distance_metric())
+    if (tipb::VectorDistanceMetric_Name(query_info->distance_metric()) != file_props.distance_metric())
         throw Exception(
             ErrorCodes::INCORRECT_QUERY,
-            "Query distance metric {} does not match index distance metric {}",
-            tipb::VectorDistanceMetric_Name(queryInfo->distance_metric()),
-            file_props.distance_metric());
+            "Query distance metric {} does not match index distance metric {}, index_id={} column_id={}",
+            tipb::VectorDistanceMetric_Name(query_info->distance_metric()),
+            file_props.distance_metric(),
+            query_info->index_id(),
+            query_info->column_id());
 
     std::atomic<size_t> visited_nodes = 0;
     std::atomic<size_t> discarded_nodes = 0;
@@ -235,8 +244,8 @@ std::vector<VectorIndexBuilder::Key> VectorIndexHNSWViewer::search(
 
     // TODO: Support efSearch.
     auto result = index.filtered_search( //
-        reinterpret_cast<const Float32 *>(queryInfo->ref_vec_f32().data() + sizeof(UInt32)),
-        queryInfo->top_k(),
+        reinterpret_cast<const Float32 *>(query_info->ref_vec_f32().data() + sizeof(UInt32)),
+        query_info->top_k(),
         predicate);
 
     if (has_exception_in_search)

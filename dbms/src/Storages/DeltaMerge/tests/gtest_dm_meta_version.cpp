@@ -165,7 +165,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion({}));
     iw->finalize();
 
     // Read out meta version = 0
@@ -209,7 +209,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file_for_write->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    ASSERT_EQ(1, dm_file_for_write->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file_for_write->meta->bumpMetaVersion({}));
     iw->finalize();
 
     auto dm_file_for_read_v1 = DMFile::restore(
@@ -232,7 +232,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file_for_write->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test2";
-    ASSERT_EQ(2, dm_file_for_write->meta->bumpMetaVersion());
+    ASSERT_EQ(2, dm_file_for_write->meta->bumpMetaVersion({}));
     iw->finalize();
 
     // Current DMFile instance does not affect
@@ -268,7 +268,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion({}));
     iw->finalize();
 
     // Overwrite meta v1.
@@ -288,7 +288,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file_2->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test_overwrite";
-    ASSERT_EQ(1, dm_file_2->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file_2->meta->bumpMetaVersion({}));
     ASSERT_THROW({ iw->finalize(); }, DB::Exception);
 
     // Read out meta v1 again.
@@ -322,12 +322,12 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    dm_file->meta->bumpMetaVersion();
+    dm_file->meta->bumpMetaVersion({});
     iw->finalize();
 
     ASSERT_THROW({ iw->finalize(); }, DB::Exception);
 
-    dm_file->meta->bumpMetaVersion();
+    dm_file->meta->bumpMetaVersion({});
     ASSERT_THROW({ iw->finalize(); }, DB::Exception);
 }
 CATCH
@@ -448,7 +448,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion({}));
     iw->finalize();
 
     // Read out meta version = 0
@@ -494,7 +494,7 @@ try
         .disagg_ctx = db_context->getSharedContextDisagg(),
     });
     dm_file->meta->getColumnStats()[::DB::TiDBPkColumnID].additional_data_for_test = "test";
-    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion());
+    ASSERT_EQ(1, dm_file->meta->bumpMetaVersion({}));
     iw->finalize();
 
     {
