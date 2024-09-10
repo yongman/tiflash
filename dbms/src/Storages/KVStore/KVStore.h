@@ -268,6 +268,7 @@ public: // Region Management
     void applyRaftLogGcTaskRes(const RaftLogGcTasksRes & res) const;
     RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
     size_t getMaxParallelPrehandleSize() const;
+    size_t getMaxPrehandleSubtaskSize() const;
 
 #ifndef DBMS_PUBLIC_GTEST
 private:
