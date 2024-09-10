@@ -21,7 +21,7 @@
 #include <Storages/DeltaMerge/File/DMFileMetaV2.h>
 #include <Storages/DeltaMerge/File/DMFileUtil.h>
 #include <Storages/DeltaMerge/File/DMFileV3IncrementWriter_fwd.h>
-#include <Storages/DeltaMerge/File/dtpb/dmfile.pb.h>
+#include <Storages/DeltaMerge/dtpb/dmfile.pb.h>
 #include <Storages/FormatVersion.h>
 #include <Storages/S3/S3Filename.h>
 #include <Storages/S3/S3RandomAccessFile.h>
