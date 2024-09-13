@@ -621,16 +621,34 @@ void StorageDisaggregated::buildRemoteSegmentSourceOps(
         group_builder.getCurProfileInfos());
 }
 
-BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & db_context, unsigned num_streams) {}
+BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & db_context, unsigned num_streams)
+{
+    const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
+    auto read_proxy_task = RNProxyReadTask::buildProxyReadTask(log, db_context, start_ts, table_scan);
+    auto streams = read_proxy_task->getInputStreams();
+    return std::move(streams);
+}
 
 void StorageDisaggregated::readThroughProxy(
     PipelineExecutorContext & exec_context,
     PipelineExecGroupBuilder & group_builder,
     const Context & db_context,
     unsigned num_streams)
-{}
+{
+    const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
+    auto read_proxy_task = RNProxyReadTask::buildProxyReadTask(log, db_context, start_ts, table_scan);
+    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
+    group_builder.addConcurrency(RNProxySourceOp::create({
+        .debug_tag = log->identifier(),
+        .db_context = db_context,
+        .exec_context = exec_context,
+        .task = read_proxy_task,
+        .columns_to_read = *column_defines,
+        .extra_table_id_index = extra_table_id_index,
+    }));
+}
 
-
+// RNProxyReaderPtr
 RNProxyReaderPtr RNProxyReader::createProxyReader(
     const LoggerPtr & log,
     const Context & db_context,
@@ -640,25 +658,268 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     UInt64 start_ts,
     const TiDBTableScan & table_scan)
 {
-    bool is_partition_scan = table_scan->tp() == tipb::TypePartitionTableScan;
     auto table_scan_pb = table_scan.getTableScanPB();
+    bool is_partition_scan = table_scan.isPartitionTableScan();
     tipb::TableInfo table_info;
     if (is_partition_scan)
     {
-        table_info.add_columns(table_scan.tbl_scan().columns());
+        for (const auto & column : table_scan_pb->tbl_scan().columns())
+        {
+            *table_info.add_columns() = column;
+        }
     }
     else
     {
-        table_info.add_columns(table_scan.partition_table_scan().columns());
+        for (const auto & column : table_scan_pb->partition_table_scan().columns())
+        {
+            *table_info.add_columns() = column;
+        }
     }
     table_info.set_table_id(physical_table_id);
-    BaseBuffView columns = table_info.SerializeAsString();
+    auto table_info_data = table_info.SerializeAsString();
+    BaseBuffView columns = BaseBuffView{table_info_data.data(), table_info_data.size()};
 
-    // Convert columns in table_scan and marshal it to string
-
+    auto * cluster = db_context.getTMTContext().getKVCluster();
     const TiFlashRaftProxyHelper * proxy_helper = db_context.getTMTContext().getKVStore()->getProxyHelper();
     ColumnarReaderPtr columnar_reader
         = proxy_helper->cloud_storage_engine_interfaces
-              .fn_get_columnar_reader(region_id, region_ver, start_ts, columns, proxy_helper->proxy_ptr);
+              .fn_get_columnar_reader(region_id, region_ver, start_ts, std::move(columns), proxy_helper->proxy_ptr);
+    if (columnar_reader.error_type == ColumnarReaderErrorType::RegionError)
+    {
+        auto error_msg = std::string(columnar_reader.error.data, columnar_reader.error.len);
+        errorpb::Error region_error;
+        region_error.ParseFromString(error_msg);
+        // Refresh region cache and throw an exception for retrying.
+        if (region_error.has_epoch_not_match())
+        {
+            for (const auto & region : region_error.epoch_not_match().current_regions())
+            {
+                auto region_ver_id = pingcap::kv::RegionVerID(
+                    region.id(),
+                    region.region_epoch().conf_ver(),
+                    region.region_epoch().version());
+                cluster->region_cache->dropRegion(region_ver_id);
+            }
+            throw Exception("region error epoch not match", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+        }
+        else
+        {
+            throw Exception("other region error", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+        }
+    }
+    else if (columnar_reader.error_type == ColumnarReaderErrorType::LockedError)
+    {
+        auto error_msg = std::string(columnar_reader.error.data, columnar_reader.error.len);
+        kvrpcpb::LockInfo lock_info;
+        lock_info.ParseFromString(error_msg);
+
+        // Try to resolve locks.
+        pingcap::kv::Backoffer bo(pingcap::kv::copNextMaxBackoff);
+        std::vector<uint64_t> pushed;
+        std::vector<pingcap::kv::LockPtr> locks{std::make_shared<pingcap::kv::Lock>(lock_info)};
+        auto before_expired = cluster->lock_resolver->resolveLocks(bo, start_ts, locks, pushed);
+        throw Exception("lock error", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+    }
+    else
+    {
+        throw Exception("unknown error type", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+    }
+
+    // Create input stream.
+    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
+    BlockInputStreamPtr input_stream = RNProxyInputStream::create({
+        .db_context = db_context,
+        .debug_tag = log->identifier(),
+        .columns_to_read = *column_defines,
+        .reader = columnar_reader,
+        .extra_table_id_index = extra_table_id_index,
+    });
+    return std::make_shared<RNProxyReader>(input_stream);
 }
+
+// RNProxyReadTask
+RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTask(
+    const LoggerPtr & log,
+    const Context & db_context,
+    UInt64 start_ts,
+    const TiDBTableScan & table_scan)
+{
+    // Collect all regions in the table scan.
+    std::unordered_map<TableID, RegionRetryList> all_remote_regions;
+    UInt64 region_num = 0;
+    for (auto physical_table_id : table_scan.getPhysicalTableIDs())
+    {
+        const auto & table_regions_info = db_context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
+
+        RUNTIME_CHECK_MSG(
+            table_regions_info.local_regions.empty(),
+            "in disaggregated_compute_mode, local_regions should be empty");
+        region_num += table_regions_info.remote_regions.size();
+        for (const auto & region : table_regions_info.remote_regions)
+            all_remote_regions[physical_table_id].emplace_back(std::cref(region));
+    }
+    std::vector<RNProxyReaderPtr> readers;
+    for (auto physical_table_id : table_scan.getPhysicalTableIDs())
+    {
+        const auto & regions = all_remote_regions[physical_table_id];
+        for (const auto & region : regions)
+        {
+            auto region_id = region.get().region_id;
+            auto region_ver = region.get().region_version;
+            // TODO: sort regions by key range?
+
+            // Create RNProxyReader for each region and init input streams for each region.
+            auto reader_ptr = RNProxyReader::createProxyReader(
+                log,
+                db_context,
+                physical_table_id,
+                region_id,
+                region_ver,
+                start_ts,
+                table_scan);
+            readers.push_back(reader_ptr);
+        }
+    }
+
+    return std::make_shared<RNProxyReadTask>(std::move(readers));
+}
+
+BlockInputStreams RNProxyReadTask::getInputStreams() const
+{
+    BlockInputStreams streams;
+    streams.reserve(proxy_readers.size());
+    for (const auto & reader : proxy_readers)
+    {
+        streams.push_back(reader->getInputStream());
+    }
+    return streams;
+}
+
+// RNProxyInputStream
+RNProxyInputStream::~RNProxyInputStream()
+{
+    LOG_INFO(
+        log,
+        "Finished reading remote snapshot through proxy, rows={} cost={}",
+        action.totalRows(),
+        duration_read_sec);
+}
+
+Block RNProxyInputStream::read(FilterPtr & res_filter, bool return_filter)
+{
+    return readImpl(res_filter);
+}
+
+Block RNProxyInputStream::readImpl(FilterPtr & res_filter)
+{
+    if (done)
+        return {};
+    const TiFlashRaftProxyHelper * proxy_helper = db_context.getTMTContext().getKVStore()->getProxyHelper();
+    UInt64 rows = proxy_helper->cloud_storage_engine_interfaces.fn_read_block(reader, batch_size);
+    if (rows == 0)
+        return {};
+
+    Block header = action.getHeader();
+    const ColumnsWithTypeAndName col_type_and_name = header.getColumnsWithTypeAndName();
+    // Construct block from proxy column data.
+    MutableColumns columns = header.cloneEmptyColumns();
+    for (UInt32 i = 0; i < col_type_and_name.size(); ++i)
+    {
+        // Read column data from proxy
+        Int64 col_id = col_type_and_name[i].column_id;
+        BaseBuffView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_column(reader, col_id);
+        String col_data_str(col_data.data, col_data.len);
+        // Deserialize column data to column
+        ReadBuffer buf(col_data_str.data(), col_data_str.length());
+        auto & col = *columns[i];
+        col_type_and_name[i].type->deserializeBinaryBulk(col, buf, rows, 0);
+    }
+    // TODO: add handle/version/mark columns
+
+    Block block;
+    block.setColumns(std::move(columns));
+    //action.transform(block, physical_table_id);
+    return block;
+}
+
+// RNProxySourceOp
+void RNProxySourceOp::operateSuffixImpl()
+{
+    LOG_INFO(log, "Finished reading proxy snapshots, rows={} cost={:.3f}s", action.totalRows(), duration_read_sec);
+}
+
+void RNProxySourceOp::operatePrefixImpl()
+{
+    LOG_INFO(log, "Begin reading proxy snapshots");
+}
+
+OperatorStatus RNProxySourceOp::readImpl(Block & block)
+{
+    if unlikely (done)
+    {
+        block = {};
+        return OperatorStatus::HAS_OUTPUT;
+    }
+
+    if (t_block.has_value())
+    {
+        std::swap(block, t_block.value());
+        //action.transform(block, physical_table_id);
+        t_block.reset();
+        return OperatorStatus::HAS_OUTPUT;
+    }
+
+    return current_reader_idx < 0 ? OperatorStatus::IO_IN : awaitImpl();
+}
+
+OperatorStatus RNProxySourceOp::awaitImpl()
+{
+    if unlikely (done || t_block.has_value())
+    {
+        return OperatorStatus::HAS_OUTPUT;
+    }
+
+    if unlikely (current_reader_idx < 0)
+    {
+        return OperatorStatus::IO_IN;
+    }
+
+    // This is the last reader and there is no more data to read.
+    if (current_reader_idx == task->getProxyReaders().size() - 1)
+    {
+        done = true;
+        return OperatorStatus::FINISHED;
+    }
+
+    // Read data from next reader.
+    ++current_reader_idx;
+    return OperatorStatus::IO_IN;
+}
+
+OperatorStatus RNProxySourceOp::executeIOImpl()
+{
+    if unlikely (done || t_block.has_value())
+    {
+        return OperatorStatus::HAS_OUTPUT;
+    }
+
+    if unlikely (current_reader_idx < 0)
+    {
+        return awaitImpl();
+    }
+
+    FilterPtr filter_ignored = nullptr;
+    Block block = task->getProxyReaders()[current_reader_idx]->getInputStream()->read(filter_ignored, false);
+    if likely (block)
+    {
+        t_block.emplace(std::move(block));
+        return OperatorStatus::HAS_OUTPUT;
+    }
+    else
+    {
+        // Current stream is drained, try to read from next stream.
+        return awaitImpl();
+    }
+}
+
 } // namespace DB

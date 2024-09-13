@@ -51,6 +51,10 @@ BlockInputStreams StorageDisaggregated::read(
     size_t,
     unsigned num_streams)
 {
+    /// Read column data from proxy
+    // TODO: add configure for proxy read path.
+    return readThroughProxy(db_context, num_streams);
+
     /// S3 config is enabled on the TiFlash compute node, let's read data from S3.
     bool remote_data_read = S3::ClientFactory::instance().isEnabled();
     if (remote_data_read)
@@ -69,6 +73,10 @@ void StorageDisaggregated::read(
     size_t /*max_block_size*/,
     unsigned num_streams)
 {
+    /// Read column data from proxy
+    // TODO: add configure for proxy read path.
+    return readThroughProxy(exec_context, group_builder, db_context, num_streams);
+
     bool remote_data_read = S3::ClientFactory::instance().isEnabled();
     if (remote_data_read)
         return readThroughS3(exec_context, group_builder, db_context, num_streams);

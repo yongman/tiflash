@@ -15,6 +15,7 @@
 #pragma once
 
 #include <Common/Logger.h>
+#include <DataStreams/AddExtraTableIDColumnTransformAction.h>
 #include <Flash/Coprocessor/DAGExpressionAnalyzer.h>
 #include <Flash/Coprocessor/DAGPipeline.h>
 #include <Flash/Coprocessor/RemoteRequest.h>
@@ -204,8 +205,6 @@ public:
         UInt64 start_ts,
         const TiDBTableScan & table_scan);
 
-    void initInputStream(const DM::ColumnDefines & columns_to_read, UInt64 read_tso);
-
     BlockInputStreamPtr getInputStream() const
     {
         RUNTIME_CHECK(input_stream != nullptr);
@@ -213,6 +212,9 @@ public:
     }
 
 private:
+    RNProxyReader(BlockInputStreamPtr input_stream)
+        : input_stream(std::move(input_stream))
+    {}
     BlockInputStreamPtr input_stream;
 };
 using RNProxyReaderPtr = std::shared_ptr<RNProxyReader>;
@@ -227,6 +229,16 @@ public:
         return std::shared_ptr<RNProxyReadTask>(new RNProxyReadTask(proxy_readers));
     }
 
+    static RNProxyReadTaskPtr buildProxyReadTask(
+        const LoggerPtr & log,
+        const Context & db_context,
+        UInt64 start_ts,
+        const TiDBTableScan & table_scan);
+
+    BlockInputStreams getInputStreams() const;
+
+    std::vector<RNProxyReaderPtr> getProxyReaders() { return proxy_readers; }
+
 private:
     RNProxyReadTask(const std::vector<RNProxyReaderPtr> & proxy_readers)
         : proxy_readers(proxy_readers)
@@ -234,4 +246,113 @@ private:
 };
 
 using RNProxyReadTaskPtr = std::shared_ptr<RNProxyReadTask>;
+
+class RNProxyInputStream : public IProfilingBlockInputStream
+{
+    static constexpr auto NAME = "RNProxy";
+
+public:
+    ~RNProxyInputStream() override;
+
+    String getName() const override { return NAME; }
+    Block getHeader() const override { return action.getHeader(); }
+    Block read(FilterPtr & res_filter, bool return_filter) override;
+
+protected:
+    Block readImpl(FilterPtr & res_filter);
+
+public:
+    struct Options
+    {
+        const Context & db_context;
+        std::string_view debug_tag;
+        const DM::ColumnDefines & columns_to_read;
+        ColumnarReaderPtr reader;
+        int extra_table_id_index;
+    };
+
+    explicit RNProxyInputStream(const Options & options)
+        : log(Logger::get(options.debug_tag))
+        , db_context(options.db_context)
+        , action(options.columns_to_read, options.extra_table_id_index)
+        , reader(options.reader)
+    {}
+
+    static BlockInputStreamPtr create(const Options & options) { return std::make_shared<RNProxyInputStream>(options); }
+
+private:
+    const Context & db_context;
+    const LoggerPtr log;
+    ColumnarReaderPtr reader;
+    AddExtraTableIDColumnTransformAction action;
+
+    bool done = false;
+
+    double duration_wait_ready_task_sec = 0;
+    double duration_read_sec = 0;
+    UInt64 batch_size = 1024;
+};
+
+class RNProxySourceOp : public SourceOp
+{
+    static constexpr auto NAME = "RNProxy";
+
+public:
+    struct Options
+    {
+        const Context & db_context;
+        std::string_view debug_tag;
+        PipelineExecutorContext & exec_context;
+        const DM::ColumnDefines & columns_to_read;
+        RNProxyReadTaskPtr task;
+        int extra_table_id_index;
+    };
+
+    explicit RNProxySourceOp(const Options & options)
+        : SourceOp(options.exec_context, String(options.debug_tag))
+        , log(Logger::get(options.debug_tag))
+        , db_context(options.db_context)
+        , action(options.columns_to_read, options.extra_table_id_index)
+        , task(options.task)
+    {
+        setHeader(action.getHeader());
+    }
+
+    static SourceOpPtr create(const Options & options) { return std::make_unique<RNProxySourceOp>(options); }
+
+    String getName() const override { return NAME; }
+
+    IOProfileInfoPtr getIOProfileInfo() const override { return IOProfileInfo::createForLocal(profile_info_ptr); }
+
+protected:
+    void operateSuffixImpl() override;
+
+    void operatePrefixImpl() override;
+
+    OperatorStatus readImpl(Block & block) override;
+
+    OperatorStatus awaitImpl() override;
+
+    OperatorStatus executeIOImpl() override;
+
+private:
+    const Context & db_context;
+    const LoggerPtr log;
+    RNProxyReadTaskPtr task;
+    AddExtraTableIDColumnTransformAction action;
+
+    UInt32 current_reader_idx = -1;
+
+    // Temporarily store the block read from current_seg_task->stream and pass it to downstream operators in readImpl.
+    std::optional<Block> t_block = std::nullopt;
+
+    bool done = false;
+    // Count the time spent waiting for segment tasks to be ready.
+    double duration_wait_ready_task_sec = 0;
+    Stopwatch wait_stop_watch{CLOCK_MONOTONIC_COARSE};
+
+    // Count the time consumed by reading blocks in the stream of segment tasks.
+    double duration_read_sec = 0;
+};
+
 } // namespace DB
