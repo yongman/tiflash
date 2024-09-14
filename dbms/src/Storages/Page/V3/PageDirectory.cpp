@@ -2278,7 +2278,7 @@ typename PageDirectory<Trait>::PageEntriesEdit PageDirectory<Trait>::dumpSnapsho
         }
     }
 
-    LOG_INFO(log, "Dumped snapshot to edits.[sequence={}]", snap->sequence);
+    LOG_INFO(log, "Dumped snapshot to edits, sequence={} edit_size={}", snap->sequence, edit.size());
     return edit;
 }
 
