@@ -55,8 +55,9 @@ extern const char force_not_clean_fap_on_destroy[];
 
 KVStore::KVStore(Context & context)
     : region_persister(
-        context.getSharedContextDisagg()->isDisaggregatedComputeMode() ? nullptr
-                                                                       : std::make_unique<RegionPersister>(context))
+          // context.getSharedContextDisagg()->isDisaggregatedComputeMode() ? nullptr
+          //                                                                :
+          std::make_unique<RegionPersister>(context))
     , raft_cmd_res(std::make_unique<RaftCommandResult>())
     , log(Logger::get())
     , region_compact_log_min_rows(40 * 1024)

@@ -193,12 +193,14 @@ private:
     std::unique_ptr<DAGExpressionAnalyzer> analyzer;
 };
 
+class RNProxyReader;
+using RNProxyReaderPtr = std::shared_ptr<RNProxyReader>;
 class RNProxyReader : boost::noncopyable
 {
 public:
     static RNProxyReaderPtr createProxyReader(
         const LoggerPtr & log,
-        const Context & db_context,
+        const Context & context,
         TableID physical_table_id,
         RegionID region_id,
         RegionVersion region_ver,
@@ -211,14 +213,16 @@ public:
         return input_stream;
     }
 
-private:
     RNProxyReader(BlockInputStreamPtr input_stream)
-        : input_stream(std::move(input_stream))
+        : input_stream(input_stream)
     {}
+
+private:
     BlockInputStreamPtr input_stream;
 };
-using RNProxyReaderPtr = std::shared_ptr<RNProxyReader>;
 
+class RNProxyReadTask;
+using RNProxyReadTaskPtr = std::shared_ptr<RNProxyReadTask>;
 class RNProxyReadTask : boost::noncopyable
 {
 public:
@@ -231,7 +235,7 @@ public:
 
     static RNProxyReadTaskPtr buildProxyReadTask(
         const LoggerPtr & log,
-        const Context & db_context,
+        const Context & context,
         UInt64 start_ts,
         const TiDBTableScan & table_scan);
 
@@ -239,13 +243,10 @@ public:
 
     std::vector<RNProxyReaderPtr> getProxyReaders() { return proxy_readers; }
 
-private:
     RNProxyReadTask(const std::vector<RNProxyReaderPtr> & proxy_readers)
         : proxy_readers(proxy_readers)
     {}
 };
-
-using RNProxyReadTaskPtr = std::shared_ptr<RNProxyReadTask>;
 
 class RNProxyInputStream : public IProfilingBlockInputStream
 {
@@ -259,12 +260,13 @@ public:
     Block read(FilterPtr & res_filter, bool return_filter) override;
 
 protected:
-    Block readImpl(FilterPtr & res_filter);
+    Block readImpl() override;
+    Block readImpl(FilterPtr & res_filter, bool return_filter) override;
 
 public:
     struct Options
     {
-        const Context & db_context;
+        const Context & context;
         std::string_view debug_tag;
         const DM::ColumnDefines & columns_to_read;
         ColumnarReaderPtr reader;
@@ -272,23 +274,24 @@ public:
     };
 
     explicit RNProxyInputStream(const Options & options)
-        : log(Logger::get(options.debug_tag))
-        , db_context(options.db_context)
-        , action(options.columns_to_read, options.extra_table_id_index)
+        : context(options.context)
+        , log(Logger::get(options.debug_tag))
         , reader(options.reader)
+        , action(options.columns_to_read, options.extra_table_id_index)
+
     {}
 
     static BlockInputStreamPtr create(const Options & options) { return std::make_shared<RNProxyInputStream>(options); }
 
 private:
-    const Context & db_context;
+    const Context & context;
     const LoggerPtr log;
     ColumnarReaderPtr reader;
     AddExtraTableIDColumnTransformAction action;
 
     bool done = false;
 
-    double duration_wait_ready_task_sec = 0;
+    //double duration_wait_ready_task_sec = 0;
     double duration_read_sec = 0;
     UInt64 batch_size = 1024;
 };
@@ -300,7 +303,7 @@ class RNProxySourceOp : public SourceOp
 public:
     struct Options
     {
-        const Context & db_context;
+        const Context & context;
         std::string_view debug_tag;
         PipelineExecutorContext & exec_context;
         const DM::ColumnDefines & columns_to_read;
@@ -310,10 +313,10 @@ public:
 
     explicit RNProxySourceOp(const Options & options)
         : SourceOp(options.exec_context, String(options.debug_tag))
+        , context(options.context)
         , log(Logger::get(options.debug_tag))
-        , db_context(options.db_context)
-        , action(options.columns_to_read, options.extra_table_id_index)
         , task(options.task)
+        , action(options.columns_to_read, options.extra_table_id_index)
     {
         setHeader(action.getHeader());
     }
@@ -336,7 +339,7 @@ protected:
     OperatorStatus executeIOImpl() override;
 
 private:
-    const Context & db_context;
+    const Context & context;
     const LoggerPtr log;
     RNProxyReadTaskPtr task;
     AddExtraTableIDColumnTransformAction action;
@@ -348,7 +351,7 @@ private:
 
     bool done = false;
     // Count the time spent waiting for segment tasks to be ready.
-    double duration_wait_ready_task_sec = 0;
+    //double duration_wait_ready_task_sec = 0;
     Stopwatch wait_stop_watch{CLOCK_MONOTONIC_COARSE};
 
     // Count the time consumed by reading blocks in the stream of segment tasks.

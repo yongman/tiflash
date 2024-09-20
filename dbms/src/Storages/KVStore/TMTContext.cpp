@@ -132,10 +132,11 @@ TMTContext::TMTContext(
     const pingcap::ClusterConfig & cluster_config)
     : context(context_)
     , kvstore(
-          context_.getSharedContextDisagg()->isDisaggregatedComputeMode()
-                  && context_.getSharedContextDisagg()->use_autoscaler
-              ? nullptr
-              : std::make_shared<KVStore>(context))
+          //   context_.getSharedContextDisagg()->isDisaggregatedComputeMode()
+          //           && context_.getSharedContextDisagg()->use_autoscaler
+          //       ? nullptr
+          //       :
+          std::make_shared<KVStore>(context))
     , region_table(context)
     , background_service(nullptr)
     , gc_manager(context)
