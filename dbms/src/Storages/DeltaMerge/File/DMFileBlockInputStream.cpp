@@ -128,7 +128,7 @@ SkippableBlockInputStreamPtr DMFileBlockInputStreamBuilder::build2(
         return fallback();
 
     auto ann_query_info = filter_with_ann->ann_query_info;
-    if (!ann_query_info)
+    if (!ann_query_info || ann_query_info->top_k() == std::numeric_limits<UInt32>::max())
         return fallback();
 
     if (!bitmap_filter.has_value())
