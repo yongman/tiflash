@@ -271,6 +271,7 @@ public:
         const DM::ColumnDefines & columns_to_read;
         ColumnarReaderPtr reader;
         int extra_table_id_index;
+        TableID table_id;
     };
 
     explicit RNProxyInputStream(const Options & options)
@@ -278,6 +279,7 @@ public:
         , log(Logger::get(options.debug_tag))
         , reader(options.reader)
         , action(options.columns_to_read, options.extra_table_id_index)
+        , table_id(options.table_id)
 
     {}
 
@@ -288,6 +290,7 @@ private:
     const LoggerPtr log;
     ColumnarReaderPtr reader;
     AddExtraTableIDColumnTransformAction action;
+    TableID table_id;
 
     bool done = false;
 
@@ -344,7 +347,7 @@ private:
     RNProxyReadTaskPtr task;
     AddExtraTableIDColumnTransformAction action;
 
-    UInt32 current_reader_idx = -1;
+    Int32 current_reader_idx = -1;
 
     // Temporarily store the block read from current_seg_task->stream and pass it to downstream operators in readImpl.
     std::optional<Block> t_block = std::nullopt;

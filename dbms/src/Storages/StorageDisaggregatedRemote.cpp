@@ -631,6 +631,7 @@ BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context
     return streams;
 }
 
+
 void StorageDisaggregated::readThroughProxy(
     PipelineExecutorContext & exec_context,
     PipelineExecGroupBuilder & group_builder,
@@ -666,14 +667,14 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     tipb::TableInfo table_info;
     if (is_partition_scan)
     {
-        for (const auto & column : table_scan_pb->tbl_scan().columns())
+        for (const auto & column : table_scan_pb->partition_table_scan().columns())
         {
             *table_info.add_columns() = column;
         }
     }
     else
     {
-        for (const auto & column : table_scan_pb->partition_table_scan().columns())
+        for (const auto & column : table_scan_pb->tbl_scan().columns())
         {
             *table_info.add_columns() = column;
         }
@@ -834,6 +835,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     UInt64 rows = proxy_helper->cloud_storage_engine_interfaces.fn_read_block(reader, batch_size);
     if (rows == 0)
         return {};
+    LOG_INFO(log, "Read {} rows from proxy", rows);
 
     Block header = action.getHeader();
     const ColumnsWithTypeAndName col_type_and_name = header.getColumnsWithTypeAndName();
@@ -851,12 +853,19 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         Int64 col_id = col_type_and_name[i].column_id;
         if (col_id == TiDBPkColumnID)
         {
-            BaseBuffView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_handle(reader);
-            String col_data_str(col_data.data, col_data.len);
+            RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_handle(reader);
+            String col_data_str(col_data.buff.data, col_data.buff.len);
             // Deserialize column data to column
-            ReadBuffer buf(col_data_str.data(), col_data_str.length());
+            ReadBufferFromString buf(col_data_str);
             auto & col = *columns[i];
-            col_type_and_name[i].type->deserializeBinaryBulk(col, buf, rows, 0);
+            col_type_and_name[i].type->deserializeBinaryBulkWithMultipleStreams(
+                col,
+                [&](const IDataType::SubstreamPath &) { return &buf; },
+                rows,
+                0,
+                true,
+                {});
+            RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type);
         }
         else if (col_id == ExtraTableIDColumnID)
         {
@@ -864,18 +873,36 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         }
         else
         {
-            BaseBuffView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_column(reader, col_id);
-            String col_data_str(col_data.data, col_data.len);
+            RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_column(reader, col_id);
+            String col_data_str(col_data.buff.data, col_data.buff.len);
             // Deserialize column data to column
-            ReadBuffer buf(col_data_str.data(), col_data_str.length());
+            ReadBufferFromString buf(col_data_str);
+            LOG_INFO(log, "Read column data length={}", col_data_str.length());
+
             auto & col = *columns[i];
-            col_type_and_name[i].type->deserializeBinaryBulk(col, buf, rows, 0);
+            col_type_and_name[i].type->deserializeBinaryBulkWithMultipleStreams(
+                col,
+                [&](const IDataType::SubstreamPath &) { return &buf; },
+                rows,
+                0,
+                true,
+                {});
+            LOG_INFO(log, "Read column data done, col size={}", col.size());
+            RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type);
         }
     }
 
-    Block block;
-    block.setColumns(std::move(columns));
-    //action.transform(block, physical_table_id);
+    for (UInt32 i = 0; i < col_type_and_name.size(); ++i)
+    {
+        auto & col = *columns[i];
+        Int64 col_id = col_type_and_name[i].column_id;
+        LOG_INFO(log, "Check read column data done, col id={} size={}", col_id, col.size());
+    }
+
+    Block block = header.cloneWithColumns(std::move(columns));
+    LOG_INFO(log, "Read block rows={}, structure={}", block.rows(), block.dumpStructure());
+    block.checkNumberOfRows();
+    action.transform(block, table_id);
     return block;
 }
 
@@ -902,7 +929,6 @@ OperatorStatus RNProxySourceOp::readImpl(Block & block)
     if (t_block.has_value())
     {
         std::swap(block, t_block.value());
-        //action.transform(block, physical_table_id);
         t_block.reset();
         return OperatorStatus::HAS_OUTPUT;
     }
@@ -919,23 +945,18 @@ OperatorStatus RNProxySourceOp::awaitImpl()
 
     if unlikely (current_reader_idx < 0)
     {
+        current_reader_idx = 0;
         return OperatorStatus::IO_IN;
     }
 
-    // This is the last reader and there is no more data to read.
-    if (current_reader_idx == task->getProxyReaders().size() - 1)
-    {
-        done = true;
-        return OperatorStatus::FINISHED;
-    }
-
-    // Read data from next reader.
-    ++current_reader_idx;
+    if (current_reader_idx < Int32(task->getProxyReaders().size() - 1))
+        ++current_reader_idx;
     return OperatorStatus::IO_IN;
 }
 
 OperatorStatus RNProxySourceOp::executeIOImpl()
 {
+    LOG_INFO(log, "executeIOImpl");
     if unlikely (done || t_block.has_value())
     {
         return OperatorStatus::HAS_OUTPUT;
@@ -955,6 +976,11 @@ OperatorStatus RNProxySourceOp::executeIOImpl()
     }
     else
     {
+        LOG_INFO(log, "executeIOImpl awaitImpl");
+        if (current_reader_idx == Int32(task->getProxyReaders().size() - 1))
+        {
+            done = true;
+        }
         // Current stream is drained, try to read from next stream.
         return awaitImpl();
     }
