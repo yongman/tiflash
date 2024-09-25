@@ -19,7 +19,7 @@
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
 #include <Storages/DeltaMerge/File/DMFileIndexWriter.h>
 #include <Storages/DeltaMerge/File/DMFileV3IncrementWriter.h>
-#include <Storages/DeltaMerge/Index/IndexInfo.h>
+#include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/DeltaMerge/Index/VectorIndex.h>
 #include <Storages/DeltaMerge/dtpb/dmfile.pb.h>
 #include <Storages/PathPool.h>
@@ -31,11 +31,15 @@ namespace DB::ErrorCodes
 {
 extern const int ABORTED;
 }
+namespace DB::FailPoints
+{
+extern const char exception_build_local_index_for_file[];
+} // namespace DB::FailPoints
 
 namespace DB::DM
 {
 
-DMFileIndexWriter::LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo(
+LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo(
     const LocalIndexInfosSnapshot & index_infos,
     const DMFiles & dm_files)
 {
@@ -47,7 +51,7 @@ DMFileIndexWriter::LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo
     //    We can support dropping the vector index more quickly later.
     LocalIndexBuildInfo build;
     build.indexes_to_build = std::make_shared<LocalIndexInfos>();
-    build.file_ids.reserve(dm_files.size());
+    build.dm_files.reserve(dm_files.size());
     for (const auto & dmfile : dm_files)
     {
         bool any_new_index_build = false;
@@ -74,11 +78,11 @@ DMFileIndexWriter::LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo
 
         if (any_new_index_build)
         {
-            build.file_ids.emplace_back(dmfile->fileId());
+            build.dm_files.emplace_back(dmfile);
         }
     }
 
-    build.file_ids.shrink_to_fit();
+    build.dm_files.shrink_to_fit();
     return build;
 }
 
@@ -190,6 +194,8 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
             }
         }
     }
+
+    FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_build_local_index_for_file);
 
     // Write down the index
     std::unordered_map<ColId, std::vector<dtpb::VectorIndexFileProps>> new_indexes_on_cols;

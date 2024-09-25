@@ -18,7 +18,8 @@
 #include <Encryption/FileProvider_fwd.h>
 #include <Interpreters/Context_fwd.h>
 #include <Interpreters/SharedContexts/Disagg_fwd.h>
-#include <Storages/DeltaMerge/Index/IndexInfo.h>
+#include <Storages/DeltaMerge/File/DMFile.h>
+#include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/Page/PageDefinesBase.h>
 
 namespace DB
@@ -39,16 +40,41 @@ using DMFiles = std::vector<DMFilePtr>;
 namespace DB::DM
 {
 
+struct LocalIndexBuildInfo
+{
+    DMFiles dm_files;
+    size_t estimated_memory_bytes = 0;
+    LocalIndexInfosPtr indexes_to_build;
+
+public:
+    std::vector<PageIdU64> filesIDs() const
+    {
+        std::vector<PageIdU64> ids;
+        ids.reserve(dm_files.size());
+        for (const auto & dmf : dm_files)
+        {
+            ids.emplace_back(dmf->fileId());
+        }
+        return ids;
+    }
+    std::vector<IndexID> indexesIDs() const
+    {
+        std::vector<IndexID> ids;
+        if (indexes_to_build)
+        {
+            ids.reserve(indexes_to_build->size());
+            for (const auto & index : *indexes_to_build)
+            {
+                ids.emplace_back(index.index_id);
+            }
+        }
+        return ids;
+    }
+};
+
 class DMFileIndexWriter
 {
 public:
-    struct LocalIndexBuildInfo
-    {
-        std::vector<PageIdU64> file_ids;
-        size_t estimated_memory_bytes = 0;
-        LocalIndexInfosPtr indexes_to_build;
-    };
-
     static LocalIndexBuildInfo getLocalIndexBuildInfo(
         const LocalIndexInfosSnapshot & index_infos,
         const DMFiles & dm_files);
