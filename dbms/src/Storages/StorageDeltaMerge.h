@@ -190,21 +190,9 @@ public:
     void checkStatus(const Context & context) override;
     void deleteRows(const Context &, size_t rows) override;
 
-    const DM::DeltaMergeStorePtr & getStore() { return getAndMaybeInitStore(); }
-
-    DM::DeltaMergeStorePtr getStoreIfInited() const;
-
     bool isCommonHandle() const override { return is_common_handle; }
 
     size_t getRowKeyColumnSize() const override { return rowkey_column_size; }
-
-    std::pair<DB::DecodingStorageSchemaSnapshotConstPtr, BlockUPtr> getSchemaSnapshotAndBlockForDecoding(
-        const TableStructureLockHolder & table_structure_lock,
-        bool /* need_block */) override;
-
-    void releaseDecodingBlock(Int64 block_decoding_schema_epoch, BlockUPtr block) override;
-
-    bool initStoreIfDataDirExist(ThreadPool * thread_pool) override;
 
     DM::DMConfigurationOpt createChecksumConfig() const { return DM::DMChecksumConfig::fromDBContext(global_context); }
 
@@ -215,6 +203,21 @@ public:
         const DM::ColumnDefines & columns_to_read,
         const Context & context,
         const LoggerPtr & tracing_logger);
+
+public:
+    const DM::DeltaMergeStorePtr & getStore() { return getAndMaybeInitStore(); }
+
+    DM::DeltaMergeStorePtr getStoreIfInited() const;
+
+    bool initStoreIfDataDirExist(ThreadPool * thread_pool) override;
+
+public:
+    /// decoding methods
+    std::pair<DB::DecodingStorageSchemaSnapshotConstPtr, BlockUPtr> getSchemaSnapshotAndBlockForDecoding(
+        const TableStructureLockHolder & table_structure_lock,
+        bool /* need_block */) override;
+
+    void releaseDecodingBlock(Int64 block_decoding_schema_epoch, BlockUPtr block) override;
 
 #ifndef DBMS_PUBLIC_GTEST
 protected:
@@ -244,8 +247,12 @@ private:
 
     DataTypePtr getPKTypeImpl() const override;
 
+    // Return the DeltaMergeStore instance
+    // If the instance is not inited, this method will initialize the instance
+    // and return it.
     DM::DeltaMergeStorePtr & getAndMaybeInitStore(ThreadPool * thread_pool = nullptr);
     bool storeInited() const { return store_inited.load(std::memory_order_acquire); }
+
     void updateTableColumnInfo();
     ColumnsDescription getNewColumnsDescription(const TiDB::TableInfo & table_info);
     DM::ColumnDefines getStoreColumnDefines() const override;
