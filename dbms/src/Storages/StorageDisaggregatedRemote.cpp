@@ -625,10 +625,22 @@ void StorageDisaggregated::buildRemoteSegmentSourceOps(
 BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context, unsigned num_streams)
 {
     UNUSED(num_streams);
+    DAGPipeline pipeline;
     const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
     auto read_proxy_task = RNProxyReadTask::buildProxyReadTask(log, context, start_ts, table_scan);
-    auto streams = read_proxy_task->getInputStreams();
-    return streams;
+    pipeline.streams = read_proxy_task->getInputStreams();
+    NamesAndTypes source_columns;
+    source_columns.reserve(table_scan.getColumnSize());
+    const auto & stream_header = pipeline.firstStream()->getHeader();
+    for (const auto & col : stream_header)
+    {
+        source_columns.emplace_back(col.name, col.type);
+    }
+    analyzer = std::make_unique<DAGExpressionAnalyzer>(std::move(source_columns), context);
+
+    // Handle duration type column
+    extraCast(*analyzer, pipeline);
+    return pipeline.streams;
 }
 
 
@@ -650,6 +662,15 @@ void StorageDisaggregated::readThroughProxy(
         .task = read_proxy_task,
         .extra_table_id_index = extra_table_id_index,
     }));
+    NamesAndTypes source_columns;
+    auto header = group_builder.getCurrentHeader();
+    source_columns.reserve(header.columns());
+    for (const auto & col : header)
+        source_columns.emplace_back(col.name, col.type);
+    analyzer = std::make_unique<DAGExpressionAnalyzer>(std::move(source_columns), context);
+
+    // Handle duration type column
+    extraCast(exec_context, group_builder, *analyzer);
 }
 
 // RNProxyReaderPtr
@@ -833,9 +854,9 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     const Context & global_ctx = context.getGlobalContext();
     const TiFlashRaftProxyHelper * proxy_helper = global_ctx.getTMTContext().getKVStore()->getProxyHelper();
     UInt64 rows = proxy_helper->cloud_storage_engine_interfaces.fn_read_block(reader, batch_size);
+    LOG_INFO(log, "Read {} rows from proxy", rows);
     if (rows == 0)
         return {};
-    LOG_INFO(log, "Read {} rows from proxy", rows);
 
     Block header = action.getHeader();
     const ColumnsWithTypeAndName col_type_and_name = header.getColumnsWithTypeAndName();
