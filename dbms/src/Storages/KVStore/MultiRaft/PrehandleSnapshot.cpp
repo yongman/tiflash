@@ -60,17 +60,9 @@ extern const int TABLE_IS_DROPPED;
 extern const int REGION_DATA_SCHEMA_UPDATED;
 } // namespace ErrorCodes
 
-enum class ReadFromStreamError
-{
-    Ok,
-    Aborted,
-    ErrUpdateSchema,
-    ErrTableDropped,
-};
-
 struct ReadFromStreamResult
 {
-    ReadFromStreamError error = ReadFromStreamError::Ok;
+    PrehandleTransformStatus error = PrehandleTransformStatus::Ok;
     std::string extra_msg;
     RegionPtr region;
 };
@@ -198,11 +190,12 @@ static inline std::tuple<ReadFromStreamResult, PrehandleResult> executeTransform
 
         stream->write();
         stream->writeSuffix();
-        auto res = ReadFromStreamResult{.error = ReadFromStreamError::Ok, .extra_msg = "", .region = new_region};
-        if (stream->isAbort())
+        auto res = ReadFromStreamResult{.error = PrehandleTransformStatus::Ok, .extra_msg = "", .region = new_region};
+        auto abort_reason = prehandle_task->abortReason();
+        if (abort_reason)
         {
             stream->cancel();
-            res = ReadFromStreamResult{.error = ReadFromStreamError::Aborted, .extra_msg = "", .region = new_region};
+            res = ReadFromStreamResult{.error = abort_reason.value(), .extra_msg = "", .region = new_region};
         }
         auto keys_per_second = (sst_stream->getProcessKeys().write_cf + sst_stream->getProcessKeys().lock_cf
                                 + sst_stream->getProcessKeys().default_cf)
@@ -235,7 +228,7 @@ static inline std::tuple<ReadFromStreamResult, PrehandleResult> executeTransform
         {
             return std::make_pair(
                 ReadFromStreamResult{
-                    .error = ReadFromStreamError::ErrUpdateSchema,
+                    .error = PrehandleTransformStatus::ErrUpdateSchema,
                     .extra_msg = e.displayText(),
                     .region = new_region},
                 PrehandleResult{});
@@ -244,7 +237,7 @@ static inline std::tuple<ReadFromStreamResult, PrehandleResult> executeTransform
         {
             return std::make_pair(
                 ReadFromStreamResult{
-                    .error = ReadFromStreamError::ErrTableDropped,
+                    .error = PrehandleTransformStatus::ErrTableDropped,
                     .extra_msg = e.displayText(),
                     .region = new_region},
                 PrehandleResult{});
@@ -491,9 +484,9 @@ static void runInParallel(
             magic_enum::enum_name(part_result.error),
             extra_id,
             part_new_region->id());
-        if (part_result.error == ReadFromStreamError::ErrUpdateSchema)
+        if (part_result.error == PrehandleTransformStatus::ErrUpdateSchema)
         {
-            prehandle_task->abort_flag.store(true);
+            prehandle_task->abortFor(PrehandleTransformStatus::ErrUpdateSchema);
         }
         {
             std::scoped_lock l(ctx->mut);
@@ -503,6 +496,7 @@ static void runInParallel(
     }
     catch (Exception & e)
     {
+        // Exceptions other than PrehandleTransformStatus.
         // The exception can be wrapped in the future, however, we abort here.
         const auto & processed_keys = part_sst_stream->getProcessKeys();
         LOG_WARNING(
@@ -513,7 +507,7 @@ static void runInParallel(
             processed_keys.write_cf,
             extra_id,
             part_new_region->id());
-        prehandle_task->abort_flag.store(true);
+        prehandle_task->abortFor(PrehandleTransformStatus::Aborted);
         throw;
     }
 }
@@ -615,16 +609,16 @@ void executeParallelTransform(
         LOG_DEBUG(log, "Try fetch prehandle task split_id={}, region_id={}", extra_id, new_region->id());
         async_tasks.fetchResult(extra_id);
     }
-    if (head_result.error == ReadFromStreamError::Ok)
+    if (head_result.error == PrehandleTransformStatus::Ok)
     {
         prehandle_result = std::move(head_prehandle_result);
         // Aggregate results.
         for (size_t extra_id = 0; extra_id < split_key_count; extra_id++)
         {
             std::scoped_lock l(ctx->mut);
-            if (ctx->gather_res[extra_id].error == ReadFromStreamError::Ok)
+            if (ctx->gather_res[extra_id].error == PrehandleTransformStatus::Ok)
             {
-                result.error = ReadFromStreamError::Ok;
+                result.error = PrehandleTransformStatus::Ok;
                 auto & v = ctx->gather_prehandle_res[extra_id];
                 prehandle_result.ingest_ids.insert(
                     prehandle_result.ingest_ids.end(),
@@ -787,7 +781,7 @@ PrehandleResult KVStore::preHandleSSTsToDTFiles(
             }
 
             prehandle_result.stats.approx_raft_snapshot_size = approx_bytes;
-            if (result.error == ReadFromStreamError::ErrUpdateSchema)
+            if (result.error == PrehandleTransformStatus::ErrUpdateSchema)
             {
                 // It will be thrown in `SSTFilesToBlockInputStream`.
                 // The schema of decoding region data has been updated, need to clear and recreate another stream for writing DTFile(s)
@@ -812,11 +806,11 @@ PrehandleResult KVStore::preHandleSSTsToDTFiles(
                 // Next time should force_decode
                 force_decode = true;
                 prehandle_result = PrehandleResult{};
-                prehandle_task->abort_flag.store(false);
+                prehandle_task->reset();
 
                 continue;
             }
-            else if (result.error == ReadFromStreamError::ErrTableDropped)
+            else if (result.error == PrehandleTransformStatus::ErrTableDropped)
             {
                 // We can ignore if storage is dropped.
                 LOG_INFO(
@@ -825,7 +819,7 @@ PrehandleResult KVStore::preHandleSSTsToDTFiles(
                     new_region->toString(true));
                 break;
             }
-            else if (result.error == ReadFromStreamError::Aborted)
+            else if (result.error == PrehandleTransformStatus::Aborted)
             {
                 LOG_INFO(
                     log,
@@ -871,7 +865,7 @@ void KVStore::abortPreHandleSnapshot(UInt64 region_id, TMTContext & tmt)
         // The task is registered, set the cancel flag to true and the generated files
         // will be clear later by `releasePreHandleSnapshot`
         LOG_INFO(log, "Try cancel pre-handling from upper layer, region_id={}", region_id);
-        prehandle_task->abort_flag.store(true, std::memory_order_seq_cst);
+        prehandle_task->abortFor(PrehandleTransformStatus::Aborted);
     }
     else
     {
