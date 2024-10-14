@@ -14,13 +14,13 @@
 
 #include <Common/FailPoint.h>
 #include <Common/SyncPoint/Ctl.h>
+#include <Encryption/MockKeyManager.h>
+#include <Encryption/PosixRandomAccessFile.h>
 #include <Flash/Disaggregated/MockS3LockClient.h>
 #include <Flash/Disaggregated/S3LockClient.h>
 #include <IO/ReadBufferFromFile.h>
 #include <IO/ReadBufferFromRandomAccessFile.h>
 #include <IO/WriteBufferFromWritableFile.h>
-#include <Encryption/PosixRandomAccessFile.h>
-#include <Encryption/MockKeyManager.h>
 #include <IO/copyData.h>
 #include <Storages/Page/V3/BlobStore.h>
 #include <Storages/Page/V3/CheckpointFile/CPFilesWriter.h>
