@@ -29,7 +29,10 @@
 #include <Storages/KVStore/MultiRaft/Disagg/CheckpointInfo.h>
 #include <Storages/KVStore/MultiRaft/Disagg/fast_add_peer.pb.h>
 
-namespace DB::DM
+namespace DB
+{
+struct GeneralCancelHandle;
+namespace DM
 {
 class Segment;
 struct SegmentSnapshot;
@@ -176,6 +179,7 @@ public:
     using SegmentMetaInfos = std::vector<SegmentMetaInfo>;
     static SegmentMetaInfos readAllSegmentsMetaInfoInRange( //
         DMContext & context,
+        const std::shared_ptr<GeneralCancelHandle> & cancel_handle,
         const RowKeyRange & target_range,
         const CheckpointInfoPtr & checkpoint_info);
 
@@ -183,6 +187,7 @@ public:
     // The data of these temp segments will be included in `wbs`.
     static Segments createTargetSegmentsFromCheckpoint( //
         const LoggerPtr & parent_log,
+        UInt64 region_id,
         DMContext & context,
         StoreID remote_store_id,
         const SegmentMetaInfos & meta_infos,
@@ -806,4 +811,5 @@ public:
 };
 
 void readSegmentMetaInfo(ReadBuffer & buf, Segment::SegmentMetaInfo & segment_info);
-} // namespace DB::DM
+} // namespace DM
+} // namespace DB
