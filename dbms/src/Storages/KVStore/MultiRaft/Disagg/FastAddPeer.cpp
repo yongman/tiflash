@@ -502,7 +502,8 @@ FastAddPeerRes FastAddPeerImpl(
                 new_peer_id,
                 std::move(std::get<CheckpointRegionInfoAndData>(res)),
                 start_time);
-            GET_METRIC(tiflash_fap_task_result, type_success_transform).Increment();
+            if (final_res.status != FastAddPeerStatus::Canceled)
+                GET_METRIC(tiflash_fap_task_result, type_success_transform).Increment();
             return final_res;
         }
         return std::get<FastAddPeerRes>(res);
