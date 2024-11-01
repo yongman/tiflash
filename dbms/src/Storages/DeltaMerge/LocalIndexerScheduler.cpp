@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <Common/Exception.h>
+#include <Common/setThreadName.h>
 #include <Storages/DeltaMerge/LocalIndexerScheduler.h>
 #include <common/logger_useful.h>
 #include <fiu.h>
@@ -268,6 +269,11 @@ bool LocalIndexerScheduler::tryAddTaskToPool(std::unique_lock<std::mutex> & lock
     }
 
     auto real_job = [task, this]() {
+        // The task is executed by a thread that is created by UniThreadPool. We need to set the thread name
+        // before executing and reset it after the task is done.
+        const auto old_thread_name = getThreadName();
+        setThreadName("LocalIndexPool");
+
         SCOPE_EXIT({
             std::unique_lock lock(mutex);
             pool_current_memory -= task->user_task.request_memory;
@@ -277,6 +283,7 @@ bool LocalIndexerScheduler::tryAddTaskToPool(std::unique_lock<std::mutex> & lock
 
             scheduler_need_wakeup = true;
             scheduler_notifier.notify_all();
+            setThreadName(old_thread_name.c_str());
         });
 
         task->scheduled_at.start();
@@ -387,6 +394,8 @@ LocalIndexerScheduler::ScheduleResult LocalIndexerScheduler::scheduleNextTask(st
 
 void LocalIndexerScheduler::schedulerLoop()
 {
+    setThreadName("LocalIndexSched");
+
     while (true)
     {
         if (is_shutting_down)
