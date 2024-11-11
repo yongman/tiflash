@@ -569,6 +569,9 @@ public:
     bool isRegionInBlacklist(const RegionID region_id);
     bool isRegionsContainsInBlacklist(const std::vector<RegionID> regions);
 
+    bool initializeStoreIdBlockList(const String &);
+    const std::unordered_set<uint64_t> * getStoreIdBlockList() const;
+
 private:
     /** Check if the current client has access to the specified database.
       * If access is denied, throw an exception.
