@@ -71,6 +71,7 @@ namespace DB
 namespace ErrorCodes
 {
 extern const int DISAGG_ESTABLISH_RETRYABLE_ERROR;
+extern const int COLUMNAR_SNAPSHOT_ERROR;
 extern const int TIMEOUT_EXCEEDED;
 extern const int UNKNOWN_EXCEPTION;
 } // namespace ErrorCodes
@@ -727,12 +728,12 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
                 cluster->region_cache->dropRegion(region_ver_id);
             }
             LOG_INFO(log, "create columnar reader failed, epoch not match");
-            throw Exception("region error epoch not match", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+            throw Exception("region error epoch not match", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
         }
         else
         {
             LOG_INFO(log, "create columnar reader failed, other region error");
-            throw Exception("other region error", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+            throw Exception("other region error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
         }
     }
     else if (columnar_reader.error_type == ColumnarReaderErrorType::LockedError)
@@ -747,12 +748,17 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         std::vector<pingcap::kv::LockPtr> locks{std::make_shared<pingcap::kv::Lock>(lock_info)};
         auto before_expired = cluster->lock_resolver->resolveLocks(bo, start_ts, locks, pushed);
         LOG_INFO(log, "Finished resolve locks, before_expired={}", before_expired);
-        throw Exception("lock error", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+        throw Exception("lock error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
+    }
+    else if (columnar_reader.error_type == ColumnarReaderErrorType::PdClientError)
+    {
+        LOG_INFO(log, "create columnar reader failed, pd client error");
+        throw Exception("pd client error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
     else if (columnar_reader.error_type != ColumnarReaderErrorType::OK)
     {
         LOG_INFO(log, "create columnar reader, other error_type {}", uint8_t(columnar_reader.error_type));
-        throw Exception("unknown error type", ErrorCodes::DISAGG_ESTABLISH_RETRYABLE_ERROR);
+        throw Exception("unknown error type", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
 
     // Create input stream.
