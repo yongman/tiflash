@@ -719,6 +719,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         // Refresh region cache and throw an exception for retrying.
         if (region_error.has_epoch_not_match())
         {
+            RegionException::UnavailableRegions unavailable_regions;
             for (const auto & region : region_error.epoch_not_match().current_regions())
             {
                 auto region_ver_id = pingcap::kv::RegionVerID(
@@ -726,9 +727,23 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
                     region.region_epoch().conf_ver(),
                     region.region_epoch().version());
                 cluster->region_cache->dropRegion(region_ver_id);
+                unavailable_regions.insert(region.id());
             }
             LOG_INFO(log, "create columnar reader failed, epoch not match");
-            throw Exception("region error epoch not match", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
+            throw RegionException(
+                std::move(unavailable_regions),
+                RegionException::RegionReadStatus::EPOCH_NOT_MATCH,
+                "epoch not match");
+        }
+        else if (region_error.has_region_not_found())
+        {
+            RegionException::UnavailableRegions unavailable_regions;
+            unavailable_regions.insert(region_error.region_not_found().region_id());
+            LOG_INFO(log, "create columnar reader failed, region not found");
+            throw RegionException(
+                std::move(unavailable_regions),
+                RegionException::RegionReadStatus::NOT_FOUND,
+                "region not found");
         }
         else
         {
@@ -973,11 +988,8 @@ OperatorStatus RNProxySourceOp::awaitImpl()
     if unlikely (current_reader_idx < 0)
     {
         current_reader_idx = 0;
-        return OperatorStatus::IO_IN;
     }
 
-    if (current_reader_idx < Int32(task->getProxyReaders().size() - 1))
-        ++current_reader_idx;
     return OperatorStatus::IO_IN;
 }
 
@@ -996,7 +1008,7 @@ OperatorStatus RNProxySourceOp::executeIOImpl()
 
     FilterPtr filter_ignored = nullptr;
     Block block = task->getProxyReaders()[current_reader_idx]->getInputStream()->read(filter_ignored, false);
-    if likely (block)
+    if likely (block && block.rows() > 0)
     {
         t_block.emplace(std::move(block));
         return OperatorStatus::HAS_OUTPUT;
@@ -1007,6 +1019,10 @@ OperatorStatus RNProxySourceOp::executeIOImpl()
         if (current_reader_idx == Int32(task->getProxyReaders().size() - 1))
         {
             done = true;
+        }
+        else if (current_reader_idx < Int32(task->getProxyReaders().size() - 1))
+        {
+            ++current_reader_idx;
         }
         // Current stream is drained, try to read from next stream.
         return awaitImpl();
