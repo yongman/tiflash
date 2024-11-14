@@ -57,6 +57,7 @@ public:
     }
 
     std::string getFileName() const override { return filename; }
+    std::string getInitialFileName() const override { return filename; }
 
     int getFd() const override { return -1; }
 

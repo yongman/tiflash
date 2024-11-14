@@ -17,7 +17,6 @@
 #include <Common/Exception.h>
 #include <Common/Logger.h>
 #include <Encryption/RandomAccessFile.h>
-#include <Storages/DeltaMerge/File/MergedFile.h>
 #include <Storages/DeltaMerge/ScanContext_fwd.h>
 #include <aws/s3/model/GetObjectResult.h>
 #include <common/types.h>
@@ -53,7 +52,11 @@ public:
 
     ssize_t read(char * buf, size_t size) override;
 
+    // Note that this will return "{S3Client.bucket_name}/{remote_fname}"
     std::string getFileName() const override;
+
+    // Return "remote_fname"
+    std::string getInitialFileName() const override;
 
     ssize_t pread(char * /*buf*/, size_t /*size*/, off_t /*offset*/) const override
     {
@@ -77,6 +80,8 @@ public:
         read_file_info = std::move(read_file_info_);
         return ext::make_scope_guard([]() { read_file_info.reset(); });
     }
+
+    String summary() const;
 
 private:
     bool initialize();
@@ -102,5 +107,7 @@ private:
     Int32 cur_retry = 0;
     static constexpr Int32 max_retry = 3;
 };
+
+using S3RandomAccessFilePtr = std::shared_ptr<S3RandomAccessFile>;
 
 } // namespace DB::S3
