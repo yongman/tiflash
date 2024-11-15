@@ -51,6 +51,7 @@ struct RNReadSegmentMeta
     // =================================================================
 
     // ======== Fields below are other supplementary information about the remote segment ========
+    // The index pages of ColumnFileTiny are also included.
     const std::vector<UInt64> delta_tinycf_page_ids;
     const std::vector<size_t> delta_tinycf_page_sizes;
     const SegmentPtr segment;

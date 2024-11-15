@@ -195,7 +195,7 @@ public:
 
 
 public:
-    enum LocalIndexState
+    enum class LocalIndexState
     {
         NoNeed,
         IndexPending,

@@ -116,26 +116,16 @@ SkippableBlockInputStreamPtr DMFileBlockInputStreamBuilder::build2(
         return build(dmfile, read_columns, rowkey_ranges, scan_context);
     };
 
-    if (rs_filter == nullptr)
+    if (!rs_filter)
         return fallback();
-
-    // Fast Scan and Clean Read does not affect our behavior. (TODO: Confirm?)
-    // if (is_fast_scan || enable_del_clean_read || enable_handle_clean_read)
-    //    return fallback();
 
     auto filter_with_ann = std::dynamic_pointer_cast<WithANNQueryInfo>(rs_filter);
-    if (filter_with_ann == nullptr)
-        return fallback();
-
-    auto ann_query_info = filter_with_ann->ann_query_info;
-    if (!ann_query_info || ann_query_info->top_k() == std::numeric_limits<UInt32>::max())
-        return fallback();
-
-    if (!bitmap_filter.has_value())
+    if (!filter_with_ann)
         return fallback();
 
     // Fast check: ANNQueryInfo is available in the whole read path. However we may not reading vector column now.
     bool is_matching_ann_query = false;
+    auto ann_query_info = filter_with_ann->ann_query_info;
     for (const auto & cd : read_columns)
     {
         // Note that it requires ann_query_info->column_id match
@@ -146,6 +136,9 @@ SkippableBlockInputStreamPtr DMFileBlockInputStreamBuilder::build2(
         }
     }
     if (!is_matching_ann_query)
+        return fallback();
+
+    if (!bitmap_filter.has_value())
         return fallback();
 
     Block header_layout = toEmptyBlock(read_columns);
@@ -226,8 +219,6 @@ SkippableBlockInputStreamPtr DMFileBlockInputStreamBuilder::build2(
         std::move(header_layout),
         std::move(rest_columns_reader),
         std::move(vec_column.value()),
-        file_provider,
-        read_limiter,
         scan_context,
         vector_index_cache,
         bitmap_filter.value(),

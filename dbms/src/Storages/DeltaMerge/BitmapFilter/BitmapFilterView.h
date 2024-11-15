@@ -46,11 +46,14 @@ public:
         return BitmapFilterView(std::make_shared<BitmapFilter>(size, default_value), 0, size);
     }
 
-    inline bool get(UInt32 n) const
+    BitmapFilterView createSubView(UInt32 offset, UInt32 size) const
     {
-        RUNTIME_CHECK(n < filter_size);
-        return filter->get(filter_offset + n);
+        RUNTIME_CHECK(offset + size <= filter_size, offset, size, filter_size);
+        return BitmapFilterView(filter, filter_offset + offset, size);
     }
+
+    // Caller should ensure n in [0, size).
+    inline bool get(UInt32 n) const { return filter->get(filter_offset + n); }
 
     inline bool operator[](UInt32 n) const { return get(n); }
 

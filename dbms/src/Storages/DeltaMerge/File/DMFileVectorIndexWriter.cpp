@@ -13,12 +13,13 @@
 // limitations under the License.
 
 #include <Common/Exception.h>
+#include <Interpreters/Context.h>
 #include <Interpreters/SharedContexts/Disagg.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
-#include <Storages/DeltaMerge/File/DMFileIndexWriter.h>
 #include <Storages/DeltaMerge/File/DMFileV3IncrementWriter.h>
+#include <Storages/DeltaMerge/File/DMFileVectorIndexWriter.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/DeltaMerge/Index/VectorIndex.h>
 #include <Storages/DeltaMerge/dtpb/dmfile.pb.h>
@@ -39,7 +40,7 @@ extern const char exception_build_local_index_for_file[];
 namespace DB::DM
 {
 
-LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo(
+LocalIndexBuildInfo DMFileVectorIndexWriter::getLocalIndexBuildInfo(
     const LocalIndexInfosSnapshot & index_infos,
     const DMFiles & dm_files)
 {
@@ -86,7 +87,8 @@ LocalIndexBuildInfo DMFileIndexWriter::getLocalIndexBuildInfo(
     return build;
 }
 
-void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, ProceedCheckFn should_proceed) const
+size_t DMFileVectorIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, ProceedCheckFn should_proceed)
+    const
 {
     const auto column_defines = dm_file_mutable->getColumnDefines();
     const auto del_cd_iter = std::find_if(column_defines.cbegin(), column_defines.cend(), [](const ColumnDefine & cd) {
@@ -103,7 +105,7 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
     ColumnDefines read_columns{*del_cd_iter};
     read_columns.reserve(options.index_infos->size() + 1);
 
-    std::unordered_map<IndexID, std::vector<VectorIndexBuilderPtr>> index_builders;
+    std::unordered_map<ColId, std::vector<VectorIndexBuilderPtr>> index_builders;
 
     std::unordered_map<ColId, std::vector<LocalIndexInfo>> col_indexes;
     for (const auto & index_info : *options.index_infos)
@@ -141,7 +143,7 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
     if (read_columns.size() == 1 || index_builders.empty())
     {
         // No index to build.
-        return;
+        return 0;
     }
 
     DMFileV3IncrementWriter::Options iw_options{
@@ -198,6 +200,7 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
     FAIL_POINT_TRIGGER_EXCEPTION(FailPoints::exception_build_local_index_for_file);
 
     // Write down the index
+    size_t total_built_index_bytes = 0;
     std::unordered_map<ColId, std::vector<dtpb::VectorIndexFileProps>> new_indexes_on_cols;
     for (size_t col_idx = 1; col_idx < num_cols; ++col_idx)
     {
@@ -215,7 +218,7 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
                     ? dm_file_mutable->vectorIndexFileName(index_id)
                     : colIndexFileName(DMFile::getFileNameBase(cd.id, substream_path));
                 const auto index_path = iw->localPath() + "/" + index_file_name;
-                index_builder->save(index_path);
+                index_builder->saveToFile(index_path);
 
                 // Memorize what kind of vector index it is, so that we can correctly restore it when reading.
                 dtpb::VectorIndexFileProps pb_idx;
@@ -223,9 +226,11 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
                 pb_idx.set_distance_metric(tipb::VectorDistanceMetric_Name(index_builder->definition->distance_metric));
                 pb_idx.set_dimensions(index_builder->definition->dimension);
                 pb_idx.set_index_id(index_id);
-                pb_idx.set_index_bytes(Poco::File(index_path).getSize());
+                auto index_bytes = Poco::File(index_path).getSize();
+                pb_idx.set_index_bytes(index_bytes);
                 new_indexes.emplace_back(std::move(pb_idx));
 
+                total_built_index_bytes += index_bytes;
                 iw->include(index_file_name);
             }
             // Inorder to avoid concurrency reading on ColumnStat, the new added indexes
@@ -238,9 +243,10 @@ void DMFileIndexWriter::buildIndexForFile(const DMFilePtr & dm_file_mutable, Pro
 
     dm_file_mutable->meta->bumpMetaVersion(DMFileMetaChangeset{new_indexes_on_cols});
     iw->finalize(); // Note: There may be S3 uploads here.
+    return total_built_index_bytes;
 }
 
-DMFiles DMFileIndexWriter::build(ProceedCheckFn should_proceed) const
+DMFiles DMFileVectorIndexWriter::build(ProceedCheckFn should_proceed) const
 {
     // Create a clone of existing DMFile instances by using DMFile::restore,
     // because later we will mutate some fields and persist these mutations.
@@ -267,12 +273,15 @@ DMFiles DMFileIndexWriter::build(ProceedCheckFn should_proceed) const
 
     for (const auto & cloned_dmfile : cloned_dm_files)
     {
-        buildIndexForFile(cloned_dmfile, should_proceed);
-        // TODO: including the new index bytes in the file size.
-        // auto res = dm_context.path_pool->getStableDiskDelegator().updateDTFileSize(
-        //     new_dmfile->fileId(),
-        //     new_dmfile->getBytesOnDisk());
-        // RUNTIME_CHECK_MSG(res, "update dt file size failed, path={}", new_dmfile->path());
+        auto index_bytes = buildIndexForFile(cloned_dmfile, should_proceed);
+        if (auto data_store = options.db_context.getSharedContextDisagg()->remote_data_store; !data_store)
+        {
+            // After building index, add the index size to the file size.
+            auto res = options.path_pool->getStableDiskDelegator().updateDTFileSize(
+                cloned_dmfile->fileId(),
+                cloned_dmfile->getBytesOnDisk() + index_bytes);
+            RUNTIME_CHECK_MSG(res, "update dt file size failed, path={}", cloned_dmfile->path());
+        }
     }
 
     return cloned_dm_files;

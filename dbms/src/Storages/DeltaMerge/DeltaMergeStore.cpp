@@ -812,6 +812,8 @@ bool DeltaMergeStore::flushCache(const DMContextPtr & dm_context, const RowKeyRa
 
             if (segment->flushCache(*dm_context))
             {
+                // After flush, try to add delta local index.
+                segmentEnsureDeltaLocalIndexAsync(segment);
                 break;
             }
             else if (!try_until_succeed)
@@ -944,6 +946,8 @@ void DeltaMergeStore::compact(const Context & db_context, const RowKeyRange & ra
             // compact could fail.
             if (segment->compactDelta(*dm_context))
             {
+                // After compact delta, try to create delta local index.
+                segmentEnsureDeltaLocalIndexAsync(segment);
                 break;
             }
         }
@@ -1663,6 +1667,8 @@ bool DeltaMergeStore::checkSegmentUpdate(
                 segment->info(),
                 magic_enum::enum_name(input_type));
             segment->flushCache(*dm_context);
+            // After flush, try to add delta local index.
+            segmentEnsureDeltaLocalIndexAsync(segment);
             if (input_type == InputType::RaftLog)
             {
                 // Only the segment update is from a raft log write, will we notify KVStore to trigger a foreground flush.

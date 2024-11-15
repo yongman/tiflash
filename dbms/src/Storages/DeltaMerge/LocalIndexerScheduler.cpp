@@ -23,8 +23,27 @@ namespace DB::FailPoints
 extern const char force_local_index_task_memory_limit_exceeded[];
 } // namespace DB::FailPoints
 
+
 namespace DB::DM
 {
+
+bool operator==(const LocalIndexerScheduler::FileID & lhs, const LocalIndexerScheduler::FileID & rhs)
+{
+    if (lhs.index() != rhs.index())
+        return false;
+
+    auto index = lhs.index();
+    if (index == 0)
+    {
+        return std::get<LocalIndexerScheduler::DMFileID>(lhs).id == std::get<LocalIndexerScheduler::DMFileID>(rhs).id;
+    }
+    else if (index == 1)
+    {
+        return std::get<LocalIndexerScheduler::ColumnFileTinyID>(lhs).id
+            == std::get<LocalIndexerScheduler::ColumnFileTinyID>(rhs).id;
+    }
+    return false;
+}
 
 LocalIndexerScheduler::LocalIndexerScheduler(const Options & options)
     : logger(Logger::get())
@@ -105,14 +124,14 @@ std::tuple<bool, String> LocalIndexerScheduler::pushTask(const Task & task)
     const auto internal_task = std::make_shared<InternalTask>(InternalTask{
         .user_task = task,
         .created_at = Stopwatch(),
-        .scheduled_at = Stopwatch{}, // Not scheduled
+        .scheduled_at = Stopwatch(), // Not scheduled
     });
 
     // Whether task is ready is undertermined. It can be changed any time
     // according to current running tasks.
     // The scheduler will find a better place for this task when meeting it.
     ready_tasks[task.keyspace_id][task.table_id].emplace_back(internal_task);
-    all_tasks_count++;
+    ++all_tasks_count;
 
     scheduler_need_wakeup = true;
     scheduler_notifier.notify_all();
@@ -124,12 +143,10 @@ size_t LocalIndexerScheduler::dropTasks(KeyspaceID keyspace_id, TableID table_id
     size_t dropped_tasks = 0;
 
     std::unique_lock lock(mutex);
-    auto it = ready_tasks.find(keyspace_id);
-    if (it != ready_tasks.end())
+    if (auto it = ready_tasks.find(keyspace_id); it != ready_tasks.end())
     {
         auto & tasks_by_table = it->second;
-        auto table_it = tasks_by_table.find(table_id);
-        if (table_it != tasks_by_table.end())
+        if (auto table_it = tasks_by_table.find(table_id); table_it != tasks_by_table.end())
         {
             dropped_tasks += table_it->second.size();
             tasks_by_table.erase(table_it);
@@ -142,7 +159,7 @@ size_t LocalIndexerScheduler::dropTasks(KeyspaceID keyspace_id, TableID table_id
         if ((*it)->user_task.keyspace_id == keyspace_id && (*it)->user_task.table_id == table_id)
         {
             it = unready_tasks.erase(it);
-            dropped_tasks++;
+            ++dropped_tasks;
         }
         else
         {
@@ -155,46 +172,32 @@ size_t LocalIndexerScheduler::dropTasks(KeyspaceID keyspace_id, TableID table_id
     return dropped_tasks;
 }
 
-bool LocalIndexerScheduler::isTaskReady(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task)
+bool LocalIndexerScheduler::isTaskReady(std::unique_lock<std::mutex> &, const InternalTaskPtr & task)
 {
-    UNUSED(lock);
-
-    for (const auto & dmfile_id : task->user_task.dmfile_ids)
+    for (const auto & file_id : task->user_task.file_ids)
     {
-        auto unique_dmfile_id = UniqueDMFileID{
-            .keyspace_id = task->user_task.keyspace_id,
-            .table_id = task->user_task.table_id,
-            .dmfile_id = dmfile_id,
-        };
-        if (adding_index_dmfile_id_set.find(unique_dmfile_id) != adding_index_dmfile_id_set.end())
+        if (adding_index_page_id_set.find(file_id) != adding_index_page_id_set.end())
             return false;
     }
     return true;
 }
 
-void LocalIndexerScheduler::taskOnSchedule(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task)
+void LocalIndexerScheduler::taskOnSchedule(std::unique_lock<std::mutex> &, const InternalTaskPtr & task)
 {
-    UNUSED(lock);
-
-    for (const auto & dmfile_id : task->user_task.dmfile_ids)
+    for (const auto & file_id : task->user_task.file_ids)
     {
-        auto unique_dmfile_id = UniqueDMFileID{
-            .keyspace_id = task->user_task.keyspace_id,
-            .table_id = task->user_task.table_id,
-            .dmfile_id = dmfile_id,
-        };
-        auto [it, inserted] = adding_index_dmfile_id_set.insert(unique_dmfile_id);
+        auto [it, inserted] = adding_index_page_id_set.insert(file_id);
         RUNTIME_CHECK(inserted);
         UNUSED(it);
     }
 
     LOG_DEBUG( //
         logger,
-        "Start LocalIndex task, keyspace_id={} table_id={} dmfile_ids={} "
+        "Start LocalIndex task, keyspace_id={} table_id={} file_ids={} "
         "memory_[this/total/limit]_mb={:.1f}/{:.1f}/{:.1f} all_tasks={}",
         task->user_task.keyspace_id,
         task->user_task.table_id,
-        task->user_task.dmfile_ids,
+        task->user_task.file_ids,
         static_cast<double>(task->user_task.request_memory) / 1024 / 1024,
         static_cast<double>(pool_current_memory) / 1024 / 1024,
         static_cast<double>(pool_max_memory_limit) / 1024 / 1024,
@@ -206,16 +209,9 @@ void LocalIndexerScheduler::taskOnSchedule(std::unique_lock<std::mutex> & lock, 
 
 void LocalIndexerScheduler::taskOnFinish(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task)
 {
-    UNUSED(lock);
-
-    for (const auto & dmfile_id : task->user_task.dmfile_ids)
+    for (const auto & file_id : task->user_task.file_ids)
     {
-        auto unique_dmfile_id = UniqueDMFileID{
-            .keyspace_id = task->user_task.keyspace_id,
-            .table_id = task->user_task.table_id,
-            .dmfile_id = dmfile_id,
-        };
-        auto erased = adding_index_dmfile_id_set.erase(unique_dmfile_id);
+        auto erased = adding_index_page_id_set.erase(file_id);
         RUNTIME_CHECK(erased == 1, erased);
     }
 
@@ -226,12 +222,12 @@ void LocalIndexerScheduler::taskOnFinish(std::unique_lock<std::mutex> & lock, co
 
     LOG_DEBUG( //
         logger,
-        "Finish LocalIndex task, keyspace_id={} table_id={} dmfile_ids={} "
+        "Finish LocalIndex task, keyspace_id={} table_id={} file_ids={} "
         "memory_[this/total/limit]_mb={:.1f}/{:.1f}/{:.1f} "
         "[schedule/task]_cost_sec={:.1f}/{:.1f}",
         task->user_task.keyspace_id,
         task->user_task.table_id,
-        task->user_task.dmfile_ids,
+        task->user_task.file_ids,
         static_cast<double>(task->user_task.request_memory) / 1024 / 1024,
         static_cast<double>(pool_current_memory) / 1024 / 1024,
         static_cast<double>(pool_max_memory_limit) / 1024 / 1024,
@@ -241,8 +237,6 @@ void LocalIndexerScheduler::taskOnFinish(std::unique_lock<std::mutex> & lock, co
 
 void LocalIndexerScheduler::moveBackReadyTasks(std::unique_lock<std::mutex> & lock)
 {
-    UNUSED(lock);
-
     for (auto it = unready_tasks.begin(); it != unready_tasks.end();)
     {
         auto & task = *it;
@@ -260,8 +254,6 @@ void LocalIndexerScheduler::moveBackReadyTasks(std::unique_lock<std::mutex> & lo
 
 bool LocalIndexerScheduler::tryAddTaskToPool(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task)
 {
-    UNUSED(lock);
-
     // Memory limit reached
     if (pool_max_memory_limit > 0 && pool_current_memory + task->user_task.request_memory > pool_max_memory_limit)
     {
@@ -294,7 +286,6 @@ bool LocalIndexerScheduler::tryAddTaskToPool(std::unique_lock<std::mutex> & lock
         }
         catch (...)
         {
-            // TODO: We should ensure ADD INDEX task is retried somewhere else?
             tryLogCurrentException(
                 logger,
                 fmt::format(
@@ -305,12 +296,11 @@ bool LocalIndexerScheduler::tryAddTaskToPool(std::unique_lock<std::mutex> & lock
     };
 
     RUNTIME_CHECK(pool);
-    bool ok = pool->trySchedule(real_job);
-    if (!ok)
+    if (!pool->trySchedule(real_job))
         // Concurrent task limit reached
         return false;
 
-    running_tasks_count++;
+    ++running_tasks_count;
     pool_current_memory += task->user_task.request_memory;
     taskOnSchedule(lock, task);
 
@@ -322,7 +312,8 @@ LocalIndexerScheduler::ScheduleResult LocalIndexerScheduler::scheduleNextTask(st
     if (ready_tasks.empty())
         return ScheduleResult::FAIL_NO_TASK;
 
-    // Find the keyspace ID which is just > last_schedule_keyspace_id.
+    // To be fairly between different keyspaces,
+    // find the keyspace ID which is just > last_schedule_keyspace_id.
     auto keyspace_it = ready_tasks.upper_bound(last_schedule_keyspace_id);
     if (keyspace_it == ready_tasks.end())
         keyspace_it = ready_tasks.begin();
@@ -331,11 +322,12 @@ LocalIndexerScheduler::ScheduleResult LocalIndexerScheduler::scheduleNextTask(st
     auto & tasks_by_table = keyspace_it->second;
     RUNTIME_CHECK(!tasks_by_table.empty());
 
-    TableID last_schedule_table_id = -1;
+    TableID last_schedule_table_id = InvalidTableID;
     if (last_schedule_table_id_by_ks.find(keyspace_id) != last_schedule_table_id_by_ks.end())
         last_schedule_table_id = last_schedule_table_id_by_ks[keyspace_id];
 
-    auto table_it = tasks_by_table.upper_bound(last_schedule_table_id);
+    // Try to finish all tasks in the last table before moving to the next table.
+    auto table_it = tasks_by_table.lower_bound(last_schedule_table_id);
     if (table_it == tasks_by_table.end())
         table_it = tasks_by_table.begin();
     const TableID table_id = table_it->first;
@@ -367,18 +359,17 @@ LocalIndexerScheduler::ScheduleResult LocalIndexerScheduler::scheduleNextTask(st
         LOG_DEBUG(
             logger,
             "LocalIndex task is not ready, will try again later when it is ready. "
-            "keyspace_id={} table_id={} dmfile_ids={}",
+            "keyspace_id={} table_id={} file_ids={}",
             task->user_task.keyspace_id,
             task->user_task.table_id,
-            task->user_task.dmfile_ids);
+            task->user_task.file_ids);
 
         // Let the caller retry. At next retry, we will continue using this
         // Keyspace+Table and try next task.
         return ScheduleResult::RETRY;
     }
 
-    auto ok = tryAddTaskToPool(lock, task);
-    if (!ok)
+    if (!tryAddTaskToPool(lock, task))
         // The pool is full. May be memory limit reached or concurrent task limit reached.
         // We will not try any more tasks.
         // At next retry, we will continue using this Keyspace+Table and try next task.
@@ -441,4 +432,5 @@ void LocalIndexerScheduler::schedulerLoop()
         }
     }
 }
+
 } // namespace DB::DM

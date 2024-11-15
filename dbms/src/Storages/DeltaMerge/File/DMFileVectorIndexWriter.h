@@ -20,6 +20,7 @@
 #include <Interpreters/SharedContexts/Disagg_fwd.h>
 #include <Storages/DeltaMerge/File/DMFile.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
+#include <Storages/DeltaMerge/LocalIndexerScheduler.h>
 #include <Storages/Page/PageDefinesBase.h>
 
 namespace DB
@@ -32,13 +33,6 @@ using WriteLimiterPtr = std::shared_ptr<WriteLimiter>;
 
 namespace DB::DM
 {
-class DMFile;
-using DMFilePtr = std::shared_ptr<DMFile>;
-using DMFiles = std::vector<DMFilePtr>;
-} // namespace DB::DM
-
-namespace DB::DM
-{
 
 struct LocalIndexBuildInfo
 {
@@ -47,13 +41,13 @@ struct LocalIndexBuildInfo
     LocalIndexInfosPtr indexes_to_build;
 
 public:
-    std::vector<PageIdU64> filesIDs() const
+    std::vector<LocalIndexerScheduler::FileID> filesIDs() const
     {
-        std::vector<PageIdU64> ids;
+        std::vector<LocalIndexerScheduler::FileID> ids;
         ids.reserve(dm_files.size());
         for (const auto & dmf : dm_files)
         {
-            ids.emplace_back(dmf->fileId());
+            ids.emplace_back(LocalIndexerScheduler::DMFileID(dmf->fileId()));
         }
         return ids;
     }
@@ -72,7 +66,7 @@ public:
     }
 };
 
-class DMFileIndexWriter
+class DMFileVectorIndexWriter
 {
 public:
     static LocalIndexBuildInfo getLocalIndexBuildInfo(
@@ -94,7 +88,7 @@ public:
 
     using ProceedCheckFn = std::function<bool()>;
 
-    explicit DMFileIndexWriter(const Options & options)
+    explicit DMFileVectorIndexWriter(const Options & options)
         : logger(Logger::get())
         , options(options)
     {}
@@ -109,7 +103,7 @@ public:
     }
 
 private:
-    void buildIndexForFile(const DMFilePtr & dm_file_mutable, ProceedCheckFn should_proceed) const;
+    size_t buildIndexForFile(const DMFilePtr & dm_file_mutable, ProceedCheckFn should_proceed) const;
 
 private:
     const LoggerPtr logger;

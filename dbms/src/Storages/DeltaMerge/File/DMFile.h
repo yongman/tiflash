@@ -314,9 +314,10 @@ public:
     LoggerPtr log;
     DMFileMetaPtr meta;
 
+    friend class DMFileVectorIndexReader;
     friend class DMFileV3IncrementWriter;
     friend class DMFileWriter;
-    friend class DMFileIndexWriter;
+    friend class DMFileVectorIndexWriter;
     friend class DMFileReader;
     friend class DMFilePackFilter;
     friend class DMFileBlockInputStreamBuilder;

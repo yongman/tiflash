@@ -30,6 +30,8 @@
 #include <Storages/DeltaMerge/Filter/Unsupported.h>
 #include <Storages/DeltaMerge/Filter/WithANNQueryInfo.h>
 
+#include <algorithm>
+
 namespace DB::DM
 {
 
@@ -54,6 +56,16 @@ RSOperatorPtr createUnsupported(const String & content, const String & reason, b
 RSOperatorPtr wrapWithANNQueryInfo(const RSOperatorPtr & op, const ANNQueryInfoPtr & ann_query_info)
 {
     return std::make_shared<WithANNQueryInfo>(op, ann_query_info);
+}
+
+ANNQueryInfoPtr getANNQueryInfo(const RSOperatorPtr & op)
+{
+    if (op == nullptr)
+        return nullptr;
+    auto with_ann = std::dynamic_pointer_cast<WithANNQueryInfo>(op);
+    if (with_ann == nullptr)
+        return nullptr;
+    return with_ann->ann_query_info;
 }
 
 } // namespace DB::DM

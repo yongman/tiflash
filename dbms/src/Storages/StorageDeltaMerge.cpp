@@ -797,10 +797,10 @@ DM::RSOperatorPtr StorageDeltaMerge::buildRSOperator(
     if (dag_query->ann_query_info.query_type() != tipb::ANNQueryType::InvalidQueryType)
         ann_query_info = std::make_shared<tipb::ANNQueryInfo>(dag_query->ann_query_info);
 
-    if (ann_query_info != nullptr)
-        rs_operator = wrapWithANNQueryInfo(rs_operator, ann_query_info);
+    if (!ann_query_info || ann_query_info->top_k() == std::numeric_limits<UInt32>::max())
+        return rs_operator;
 
-    return rs_operator;
+    return wrapWithANNQueryInfo(rs_operator, ann_query_info);
 }
 
 DM::PushDownFilterPtr StorageDeltaMerge::buildPushDownFilter(

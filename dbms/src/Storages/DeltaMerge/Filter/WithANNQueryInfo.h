@@ -33,7 +33,9 @@ public:
         : RSOperator({child_})
         , child(child_)
         , ann_query_info(ann_query_info_)
-    {}
+    {
+        RUNTIME_CHECK(ann_query_info != nullptr);
+    }
 
     String name() override { return "ann"; }
 

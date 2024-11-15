@@ -23,6 +23,7 @@
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileBig.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileDeleteRange.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileInMemory.h>
+#include <Storages/DeltaMerge/ColumnFile/ColumnFileSetInputStream.h>
 #include <Storages/DeltaMerge/ColumnFile/ColumnFileTiny.h>
 #include <Storages/DeltaMerge/Delta/ColumnFilePersistedSet.h>
 #include <Storages/DeltaMerge/Delta/MemTableSet.h>
@@ -331,6 +332,16 @@ public:
      * @returns empty if `for_update == true` is specified and there is another alive for_update snapshot.
      */
     DeltaSnapshotPtr createSnapshot(const DMContext & context, bool for_update, CurrentMetrics::Metric type);
+};
+
+template <class ColumnFileT>
+struct CloneColumnFilesHelper
+{
+    static std::vector<ColumnFileT> clone(
+        DMContext & dm_context,
+        const std::vector<ColumnFileT> & src,
+        const RowKeyRange & target_range,
+        WriteBatches & wbs);
 };
 
 class DeltaValueSnapshot

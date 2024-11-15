@@ -15,6 +15,7 @@
 #include <Common/CurrentMetrics.h>
 #include <Common/FailPoint.h>
 #include <DataStreams/AddExtraTableIDColumnInputStream.h>
+#include <Flash/ResourceControl/LocalAdmissionController.h>
 #include <Interpreters/Context.h>
 #include <Storages/DeltaMerge/SegmentReadTaskPool.h>
 

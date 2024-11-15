@@ -30,17 +30,36 @@ namespace DB::DM
 class LocalIndexerScheduler
 {
 public:
+    // The file id of the DMFile.
+    struct DMFileID
+    {
+        explicit DMFileID(PageIdU64 id_)
+            : id(id_)
+        {}
+        PageIdU64 id;
+    };
+    // The page id of the ColumnFileTiny.
+    struct ColumnFileTinyID
+    {
+        explicit ColumnFileTinyID(PageIdU64 id_)
+            : id(id_)
+        {}
+        PageIdU64 id;
+    };
+    using FileID = std::variant<DMFileID, ColumnFileTinyID>;
+
     struct Task
     {
-        // Note: The scheduler will try to schedule farely according to keyspace_id and table_id.
-        KeyspaceID keyspace_id;
-        TableID table_id;
+        // Note: The scheduler will try to schedule fairly according to keyspace_id and table_id.
+        const KeyspaceID keyspace_id;
+        const TableID table_id;
 
-        // Used for the scheduler to avoid concurrently adding index for the same DMFile.
-        std::vector<PageIdU64> dmfile_ids;
+        // The file id of the ColumnFileTiny or DMFile.
+        // Used for the scheduler to avoid concurrently adding index for the same file.
+        const std::vector<FileID> file_ids;
 
         // Used for the scheduler to control the maximum requested memory usage.
-        size_t request_memory;
+        const size_t request_memory;
 
         // The actual index setup workload.
         // The scheduler does not care about the workload.
@@ -99,46 +118,29 @@ public:
     size_t dropTasks(KeyspaceID keyspace_id, TableID table_id);
 
 private:
-    struct UniqueDMFileID
+    struct FileIDHasher
     {
-        // We could use DMFile path as well, but this should be faster.
-
-        KeyspaceID keyspace_id;
-        TableID table_id;
-        PageIdU64 dmfile_id;
-
-        bool operator==(const UniqueDMFileID & other) const
-        {
-            return keyspace_id == other.keyspace_id //
-                && table_id == other.table_id //
-                && dmfile_id == other.dmfile_id;
-        }
-    };
-
-    struct UniqueDMFileIDHasher
-    {
-        std::size_t operator()(const UniqueDMFileID & id) const
+        std::size_t operator()(const FileID & id) const
         {
             using boost::hash_combine;
             using boost::hash_value;
 
             std::size_t seed = 0;
-            hash_combine(seed, hash_value(id.keyspace_id));
-            hash_combine(seed, hash_value(id.table_id));
-            hash_combine(seed, hash_value(id.dmfile_id));
+            hash_combine(seed, hash_value(id.index()));
+            hash_combine(seed, hash_value(std::visit([](const auto & id) { return id.id; }, id)));
             return seed;
         }
     };
 
-    // The set of DMFiles that are currently adding index.
-    // There maybe multiple threads trying to add index for the same DMFile. For example,
+    // The set of Page that are currently adding index.
+    // There maybe multiple threads trying to add index for the same Page. For example,
     // after logical split two segments share the same DMFile, so that adding index for the two segments
     // could result in adding the same index for the same DMFile. It's just a waste of resource.
-    std::unordered_set<UniqueDMFileID, UniqueDMFileIDHasher> adding_index_dmfile_id_set;
+    std::unordered_set<FileID, FileIDHasher> adding_index_page_id_set;
 
-    bool isTaskReady(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task);
+    bool isTaskReady(std::unique_lock<std::mutex> &, const InternalTaskPtr & task);
 
-    void taskOnSchedule(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task);
+    void taskOnSchedule(std::unique_lock<std::mutex> &, const InternalTaskPtr & task);
 
     void taskOnFinish(std::unique_lock<std::mutex> & lock, const InternalTaskPtr & task);
 
@@ -186,7 +188,7 @@ private:
     size_t pool_current_memory = 0;
 
     size_t all_tasks_count = 0; // ready_tasks + unready_tasks
-    /// Schedule farely according to keyspace_id, and then according to table_id.
+    /// Schedule fairly according to keyspace_id, and then according to table_id.
     std::map<KeyspaceID, std::map<TableID, std::list<InternalTaskPtr>>> ready_tasks{};
     /// When the scheduler will stop waiting and try to schedule again?
     /// 1. When a new task is added (and pool is not full)
@@ -206,5 +208,21 @@ private:
     std::atomic<bool> is_shutting_down = false;
 };
 
+bool operator==(const LocalIndexerScheduler::FileID & lhs, const LocalIndexerScheduler::FileID & rhs);
 
 } // namespace DB::DM
+
+template <>
+struct fmt::formatter<DB::DM::LocalIndexerScheduler::FileID>
+{
+    static constexpr auto parse(format_parse_context & ctx) { return ctx.begin(); }
+
+    template <typename FormatContext>
+    auto format(const DB::DM::LocalIndexerScheduler::FileID & id, FormatContext & ctx) const -> decltype(ctx.out())
+    {
+        if (std::holds_alternative<DB::DM::LocalIndexerScheduler::DMFileID>(id))
+            return fmt::format_to(ctx.out(), "DM_{}", std::get<DB::DM::LocalIndexerScheduler::DMFileID>(id).id);
+        else
+            return fmt::format_to(ctx.out(), "CT_{}", std::get<DB::DM::LocalIndexerScheduler::ColumnFileTinyID>(id).id);
+    }
+};

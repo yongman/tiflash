@@ -60,8 +60,8 @@
 #include <tipb/select.pb.h>
 
 #include <atomic>
+#include <limits>
 #include <magic_enum.hpp>
-#include <numeric>
 #include <unordered_set>
 
 namespace DB
@@ -507,10 +507,9 @@ DM::Remote::RNWorkersPtr StorageDisaggregated::buildRNWorkers(
         DM::ANNQueryInfoPtr ann_query_info = nullptr;
         if (table_scan.getANNQueryInfo().query_type() != tipb::ANNQueryType::InvalidQueryType)
             ann_query_info = std::make_shared<tipb::ANNQueryInfo>(table_scan.getANNQueryInfo());
-        if (ann_query_info != nullptr)
+        if (ann_query_info != nullptr && ann_query_info->top_k() != std::numeric_limits<UInt32>::max())
             rs_operator = wrapWithANNQueryInfo(rs_operator, ann_query_info);
     }
-
     auto push_down_filter = StorageDeltaMerge::buildPushDownFilter(
         rs_operator,
         table_scan.getColumns(),

@@ -25,6 +25,8 @@
 #include <Interpreters/SharedContexts/Disagg.h>
 #include <Poco/Logger.h>
 #include <Storages/DeltaMerge/BitmapFilter/BitmapFilterBlockInputStream.h>
+#include <Storages/DeltaMerge/ColumnFile/ColumnFileSetWithVectorIndexInputStream.h>
+#include <Storages/DeltaMerge/ConcatSkippableBlockInputStream.h>
 #include <Storages/DeltaMerge/DMContext.h>
 #include <Storages/DeltaMerge/DMDecoratorStreams.h>
 #include <Storages/DeltaMerge/DMVersionFilterBlockInputStream.h>
@@ -420,7 +422,6 @@ Segment::SegmentMetaInfos Segment::readAllSegmentsMetaInfoInRange( //
     const RowKeyRange & target_range,
     const CheckpointInfoPtr & checkpoint_info)
 {
-
     RUNTIME_CHECK(checkpoint_info != nullptr);
     RUNTIME_CHECK(cancel_handle != nullptr);
     RUNTIME_CHECK(checkpoint_info->checkpoint_data_holder != nullptr);
@@ -1586,6 +1587,8 @@ SegmentPtr Segment::dangerouslyReplaceDataFromCheckpoint(
             auto prepared = remote_data_store->prepareDMFile(file_oid, new_data_page_id);
             auto dmfile = prepared->restore(DMFileMeta::ReadMode::all(), b->getFile()->metaVersion());
             auto new_column_file = b->cloneWith(dm_context, dmfile, rowkey_range);
+            // TODO: Do we need to acquire new page id for ColumnFileTiny index page?
+            // Maybe we even do not need to clone data page: https://github.com/pingcap/tiflash/pull/9436
             new_column_file_persisteds.push_back(new_column_file);
         }
         else
@@ -3292,18 +3295,22 @@ SkippableBlockInputStreamPtr Segment::getConcatSkippableBlockInputStream(
         columns_to_read_ptr,
         this->rowkey_range,
         read_tag);
-    SkippableBlockInputStreamPtr persisted_files_stream = std::make_shared<ColumnFileSetInputStream>(
+    auto ann_query_info = getANNQueryInfo(filter);
+    SkippableBlockInputStreamPtr persisted_files_stream = ColumnFileSetWithVectorIndexInputStream::tryBuild(
         dm_context,
         persisted_files,
         columns_to_read_ptr,
         this->rowkey_range,
+        persisted_files->getDataProvider(),
+        ann_query_info,
+        bitmap_filter,
+        segment_snap->stable->getDMFilesRows(),
         read_tag);
-
     auto stream = std::dynamic_pointer_cast<ConcatSkippableBlockInputStream<NeedRowID>>(stable_stream);
     assert(stream != nullptr);
     stream->appendChild(persisted_files_stream, persisted_files->getRows());
     stream->appendChild(mem_table_stream, memtable->getRows());
-    return stream;
+    return ConcatVectorIndexBlockInputStream::build(stream, ann_query_info);
 }
 
 BlockInputStreamPtr Segment::getLateMaterializationStream(
@@ -3406,7 +3413,7 @@ BlockInputStreamPtr Segment::getLateMaterializationStream(
         dm_context.tracing_id);
 }
 
-RowKeyRanges Segment::shrinkRowKeyRanges(const RowKeyRanges & read_ranges)
+RowKeyRanges Segment::shrinkRowKeyRanges(const RowKeyRanges & read_ranges) const
 {
     RowKeyRanges real_ranges;
     for (const auto & read_range : read_ranges)
@@ -3467,7 +3474,7 @@ BlockInputStreamPtr Segment::getBitmapFilterInputStream(
             read_data_block_rows);
     }
 
-    auto stream = getConcatSkippableBlockInputStream(
+    auto skippable_stream = getConcatSkippableBlockInputStream(
         bitmap_filter,
         segment_snap,
         dm_context,
@@ -3477,7 +3484,19 @@ BlockInputStreamPtr Segment::getBitmapFilterInputStream(
         max_version,
         read_data_block_rows,
         ReadTag::Query);
-    return std::make_shared<BitmapFilterBlockInputStream>(columns_to_read, stream, bitmap_filter);
+    auto * vector_index_stream = dynamic_cast<ConcatVectorIndexBlockInputStream *>(skippable_stream.get());
+    auto stream = std::make_shared<BitmapFilterBlockInputStream>(columns_to_read, skippable_stream, bitmap_filter);
+    if (vector_index_stream)
+    {
+        // For vector search, there are more likely to return small blocks from different sub-streams.
+        // Squash blocks to reduce the number of blocks thus improve the performance of upper layer.
+        return std::make_shared<SquashingBlockInputStream>(
+            stream,
+            /*min_block_size_rows=*/read_data_block_rows,
+            /*min_block_size_bytes=*/0,
+            dm_context.tracing_id);
+    }
+    return stream;
 }
 
 // clipBlockRows try to limit the block size not exceed settings.max_block_bytes.

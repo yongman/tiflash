@@ -83,6 +83,7 @@ RNReadSegmentTaskPtr RNReadSegmentTask::buildFromEstablishResp(
     // Note: At this moment, we still cannot read from `task->segment_snap`,
     // because they are constructed using ColumnFileDataProviderNop.
 
+    // The index page of ColumnFileTiny is also included.
     std::vector<UInt64> delta_tinycf_ids;
     std::vector<size_t> delta_tinycf_sizes;
     {
@@ -101,6 +102,19 @@ RNReadSegmentTaskPtr RNReadSegmentTask::buildFromEstablishResp(
                 delta_tinycf_ids.emplace_back(tiny->getDataPageId());
                 delta_tinycf_sizes.emplace_back(tiny->getDataPageSize());
                 ++count;
+                // Add vector index pages.
+                if (auto index_infos = tiny->getIndexInfos(); index_infos)
+                {
+                    for (const auto & index_info : *index_infos)
+                    {
+                        if (index_info.vector_index)
+                        {
+                            delta_tinycf_ids.emplace_back(index_info.index_page_id);
+                            delta_tinycf_sizes.emplace_back(index_info.vector_index->index_bytes());
+                            ++count;
+                        }
+                    }
+                }
             }
         }
         return count;
@@ -119,6 +133,7 @@ RNReadSegmentTaskPtr RNReadSegmentTask::buildFromEstablishResp(
         memory_page_count,
         persisted_page_count);
 
+    // NOLINTNEXTLINE(modernize-make-shared), private constructor
     return std::shared_ptr<RNReadSegmentTask>(new RNReadSegmentTask(RNReadSegmentMeta{
         .keyspace_id = keyspace_id,
         .physical_table_id = physical_table_id,

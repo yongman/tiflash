@@ -19,7 +19,7 @@
 #include <Storages/DeltaMerge/File/ColumnCacheLongTerm.h>
 #include <Storages/DeltaMerge/File/DMFileBlockInputStream.h>
 #include <Storages/DeltaMerge/File/DMFileBlockOutputStream.h>
-#include <Storages/DeltaMerge/File/DMFileIndexWriter.h>
+#include <Storages/DeltaMerge/File/DMFileVectorIndexWriter.h>
 #include <Storages/DeltaMerge/Filter/RSOperator.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/DeltaMerge/Index/VectorIndexCache.h>
@@ -130,8 +130,8 @@ public:
 
     DMFilePtr buildIndex(TiDB::VectorIndexDefinition definition)
     {
-        auto build_info = DMFileIndexWriter::getLocalIndexBuildInfo(indexInfo(definition), {dm_file});
-        DMFileIndexWriter iw(DMFileIndexWriter::Options{
+        auto build_info = DMFileVectorIndexWriter::getLocalIndexBuildInfo(indexInfo(definition), {dm_file});
+        DMFileVectorIndexWriter iw(DMFileVectorIndexWriter::Options{
             .path_pool = path_pool,
             .file_provider = dm_context->db_context.getFileProvider(),
             .write_limiter = dm_context->getWriteLimiter(),
@@ -150,8 +150,8 @@ public:
     DMFilePtr buildMultiIndex(const LocalIndexInfosPtr & index_infos)
     {
         assert(index_infos != nullptr);
-        auto build_info = DMFileIndexWriter::getLocalIndexBuildInfo(index_infos, {dm_file});
-        DMFileIndexWriter iw(DMFileIndexWriter::Options{
+        auto build_info = DMFileVectorIndexWriter::getLocalIndexBuildInfo(index_infos, {dm_file});
+        DMFileVectorIndexWriter iw(DMFileVectorIndexWriter::Options{
             .path_pool = path_pool,
             .file_provider = dm_context->db_context.getFileProvider(),
             .write_limiter = dm_context->getWriteLimiter(),
@@ -1398,7 +1398,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 5, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     auto stream = annQuery(DELTA_MERGE_FIRST_SEGMENT_ID, createQueryColumns(), 1, {100.0});
     assertStreamOut(stream, "[4, 5)");
@@ -1423,7 +1423,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 5, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     writeSegment(DELTA_MERGE_FIRST_SEGMENT_ID, 10, /* at */ 20);
 
@@ -1454,7 +1454,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 10, /* at */ 20, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     // Delta: [12, 18), [50, 60)
     writeSegment(DELTA_MERGE_FIRST_SEGMENT_ID, 6, /* at */ 12);
@@ -1504,7 +1504,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 100, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     size_t cache_hit = 0;
     size_t cache_miss = 0;
@@ -1547,7 +1547,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 100, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     size_t cache_hit = 0;
     size_t cache_miss = 0;
@@ -1592,7 +1592,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 100, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     size_t cache_hit = 0;
     size_t cache_miss = 0;
@@ -1695,7 +1695,7 @@ try
     ingestDTFileIntoDelta(DELTA_MERGE_FIRST_SEGMENT_ID, 5, /* at */ 0, /* clear */ false);
     flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
     mergeSegmentDelta(DELTA_MERGE_FIRST_SEGMENT_ID);
-    ensureSegmentStableIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+    ensureSegmentStableLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
 
     writeSegment(DELTA_MERGE_FIRST_SEGMENT_ID, 10, /* at */ 20);
 
@@ -1911,10 +1911,10 @@ public:
                 }),
             },
         });
-        auto build_info = DMFileIndexWriter::getLocalIndexBuildInfo(index_infos, dm_files);
+        auto build_info = DMFileVectorIndexWriter::getLocalIndexBuildInfo(index_infos, dm_files);
 
         // Build multiple index
-        DMFileIndexWriter iw(DMFileIndexWriter::Options{
+        DMFileVectorIndexWriter iw(DMFileVectorIndexWriter::Options{
             .path_pool = storage_path_pool,
             .file_provider = dm_context->db_context.getFileProvider(),
             .write_limiter = dm_context->getWriteLimiter(),

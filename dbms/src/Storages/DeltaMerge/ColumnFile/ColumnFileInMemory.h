@@ -60,7 +60,7 @@ public:
     Type getType() const override { return Type::INMEMORY_FILE; }
 
     size_t getRows() const override { return rows; }
-    size_t getBytes() const override { return bytes; };
+    size_t getBytes() const override { return bytes; }
 
     CachePtr getCache() { return cache; }
 
@@ -72,7 +72,8 @@ public:
     ColumnFileReaderPtr getReader(
         const DMContext & context,
         const IColumnFileDataProviderPtr & data_provider,
-        const ColumnDefinesPtr & col_defs) const override;
+        const ColumnDefinesPtr & col_defs,
+        ReadTag) const override;
 
     bool isAppendable() const override { return !disable_append; }
     void disableAppend() override { disable_append = true; }
@@ -133,7 +134,7 @@ public:
 
     size_t skipNextBlock() override;
 
-    ColumnFileReaderPtr createNewReader(const ColumnDefinesPtr & new_col_defs) override;
+    ColumnFileReaderPtr createNewReader(const ColumnDefinesPtr & new_col_defs, ReadTag) override;
 };
 
 } // namespace DM
