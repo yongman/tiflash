@@ -82,10 +82,28 @@ void DataTypeDecimal<T>::deserializeBinaryBulk(
     double /*avg_value_size_hint*/) const
 {
     typename ColumnType::Container & x = typeid_cast<ColumnType &>(column).getData();
-    size_t initial_size = x.size();
-    x.resize(initial_size + limit);
-    size_t size = istr.readBig(reinterpret_cast<char *>(&x[initial_size]), sizeof(FieldType) * limit);
-    x.resize(initial_size + size / sizeof(FieldType));
+
+    if (long(sizeof(FieldType) * limit) > istr.buffer().end() - istr.position())
+    {
+        for (size_t i = 0; i < limit; ++i)
+        {
+            // For cse columnar compatibility, we need to transform the i256(32 bytes) to boost i256(48 bytes) format.
+            Int128 low, high;
+            istr.readBig(reinterpret_cast<char *>(&low), sizeof(low));
+            istr.readBig(reinterpret_cast<char *>(&high), sizeof(high));
+            Int256 result = static_cast<Int256>(low);
+            result += (static_cast<Int256>(high) << 128);
+            Decimal256 dec(result);
+            x.push_back(FieldType(dec));
+        }
+    }
+    else
+    {
+        size_t initial_size = x.size();
+        x.resize(initial_size + limit);
+        size_t size = istr.readBig(reinterpret_cast<char *>(&x[initial_size]), sizeof(FieldType) * limit);
+        x.resize(initial_size + size / sizeof(FieldType));
+    }
 }
 
 template <typename T>
