@@ -628,7 +628,10 @@ BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context
     UNUSED(num_streams);
     DAGPipeline pipeline;
     const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
-    auto read_proxy_task = RNProxyReadTask::buildProxyReadTask(log, context, start_ts, table_scan);
+    auto [remote_table_ranges, region_num] = buildRemoteTableRanges();
+    UNUSED(region_num);
+    auto read_proxy_task
+        = RNProxyReadTask::buildProxyReadTaskWithBackoff(log, context, start_ts, table_scan, remote_table_ranges);
     pipeline.streams = read_proxy_task->getInputStreams();
     NamesAndTypes source_columns;
     source_columns.reserve(table_scan.getColumnSize());
@@ -653,7 +656,10 @@ void StorageDisaggregated::readThroughProxy(
 {
     UNUSED(num_streams);
     const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
-    auto read_proxy_task = RNProxyReadTask::buildProxyReadTask(log, context, start_ts, table_scan);
+    auto [remote_table_ranges, region_num] = buildRemoteTableRanges();
+    UNUSED(region_num);
+    auto read_proxy_task
+        = RNProxyReadTask::buildProxyReadTaskWithBackoff(log, context, start_ts, table_scan, remote_table_ranges);
     auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
     group_builder.addConcurrency(RNProxySourceOp::create({
         .context = context,
@@ -681,6 +687,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     TableID physical_table_id,
     RegionID region_id,
     RegionVersion region_ver,
+    UInt64 region_conf_ver,
     UInt64 start_ts,
     const TiDBTableScan & table_scan)
 {
@@ -713,50 +720,68 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
               .fn_get_columnar_reader(region_id, region_ver, start_ts, std::move(columns), proxy_helper->proxy_ptr);
     if (columnar_reader.error_type == ColumnarReaderErrorType::RegionError)
     {
-        auto error_msg = std::string(columnar_reader.error.data, columnar_reader.error.len);
+        auto error_msg = String(columnar_reader.error.buff.data, columnar_reader.error.buff.len);
         errorpb::Error region_error;
         region_error.ParseFromString(error_msg);
+        RustGcHelper::instance().gcRustPtr(columnar_reader.error.inner.ptr, columnar_reader.error.inner.type);
+        auto region_ver_id = pingcap::kv::RegionVerID(region_id, region_conf_ver, region_ver);
         // Refresh region cache and throw an exception for retrying.
         if (region_error.has_epoch_not_match())
         {
             RegionException::UnavailableRegions unavailable_regions;
+            String region_id_ver; // region_id:region_ver:conf_ver
+            std::unordered_set<RegionID> retry_regions;
             for (const auto & region : region_error.epoch_not_match().current_regions())
             {
-                auto region_ver_id = pingcap::kv::RegionVerID(
-                    region.id(),
-                    region.region_epoch().conf_ver(),
-                    region.region_epoch().version());
-                cluster->region_cache->dropRegion(region_ver_id);
                 unavailable_regions.insert(region.id());
+                retry_regions.insert(region.id());
+                region_id_ver = std::to_string(region.id()) + ":" + std::to_string(region_ver) + ":"
+                    + std::to_string(region.region_epoch().conf_ver());
             }
+            cluster->region_cache->dump();
+            const auto & table_regions_info = context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
+            LOG_INFO(log, "table regions info: {}", table_regions_info.remote_regions.size());
+            auto region_ver_id = pingcap::kv::RegionVerID(region_id, region_conf_ver, region_ver);
+            cluster->region_cache->dropRegion(region_ver_id);
             LOG_INFO(log, "create columnar reader failed, epoch not match");
             throw RegionException(
                 std::move(unavailable_regions),
                 RegionException::RegionReadStatus::EPOCH_NOT_MATCH,
-                "epoch not match");
-        }
-        else if (region_error.has_region_not_found())
-        {
-            RegionException::UnavailableRegions unavailable_regions;
-            unavailable_regions.insert(region_error.region_not_found().region_id());
-            LOG_INFO(log, "create columnar reader failed, region not found");
-            throw RegionException(
-                std::move(unavailable_regions),
-                RegionException::RegionReadStatus::NOT_FOUND,
-                "region not found");
+                region_id_ver.c_str());
         }
         else
         {
-            LOG_INFO(log, "create columnar reader failed, other region error");
-            throw Exception("other region error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
+            RegionException::UnavailableRegions unavailable_regions;
+            std::unordered_set<RegionID> retry_regions;
+            auto region_id = 0;
+            if (region_error.has_region_not_found())
+            {
+                region_id = region_error.region_not_found().region_id();
+                unavailable_regions.insert(region_id);
+                retry_regions.insert(region_id);
+                LOG_INFO(log, "create columnar reader failed, region not found {}", region_id);
+            }
+            else
+            {
+                LOG_INFO(log, "create columnar reader failed, {}", region_error.ShortDebugString());
+            }
+            const auto & table_regions_info = context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
+            cluster->region_cache->dump();
+            LOG_INFO(log, "table regions info: {}", table_regions_info.remote_regions.size());
+            auto region_ver_id = pingcap::kv::RegionVerID(region_id, region_conf_ver, region_ver);
+            cluster->region_cache->dropRegion(region_ver_id);
+            throw RegionException(
+                std::move(unavailable_regions),
+                RegionException::RegionReadStatus::NOT_FOUND,
+                std::to_string(region_id).c_str());
         }
     }
     else if (columnar_reader.error_type == ColumnarReaderErrorType::LockedError)
     {
-        auto error_msg = std::string(columnar_reader.error.data, columnar_reader.error.len);
+        auto error_msg = String(columnar_reader.error.buff.data, columnar_reader.error.buff.len);
         kvrpcpb::LockInfo lock_info;
         lock_info.ParseFromString(error_msg);
-
+        RustGcHelper::instance().gcRustPtr(columnar_reader.error.inner.ptr, columnar_reader.error.inner.type);
         // Try to resolve locks.
         pingcap::kv::Backoffer bo(pingcap::kv::copNextMaxBackoff);
         std::vector<uint64_t> pushed;
@@ -789,36 +814,89 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
 }
 
 // RNProxyReadTask
+RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTaskWithBackoff(
+    const LoggerPtr & log,
+    const Context & context,
+    UInt64 start_ts,
+    const TiDBTableScan & table_scan,
+    const std::vector<StorageDisaggregated::RemoteTableRange> & remote_table_ranges)
+{
+    RNProxyReadTaskPtr task;
+    pingcap::kv::Backoffer bo(pingcap::kv::copNextMaxBackoff);
+    while (true)
+    {
+        try
+        {
+            task = RNProxyReadTask::buildProxyReadTask(log, context, start_ts, table_scan, remote_table_ranges);
+            break;
+        }
+        catch (RegionException & e)
+        {
+            LOG_ERROR(log, "buildProxyReadTask failed, backoff and retry, {}", e.message());
+            bo.backoff(pingcap::kv::boRegionMiss, pingcap::Exception(e.message(), e.code()));
+        }
+    }
+    return task;
+}
+
 RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTask(
     const LoggerPtr & log,
     const Context & context,
     UInt64 start_ts,
-    const TiDBTableScan & table_scan)
+    const TiDBTableScan & table_scan,
+    const std::vector<StorageDisaggregated::RemoteTableRange> & remote_table_ranges)
 {
     // Collect all regions in the table scan.
-    std::unordered_map<TableID, RegionRetryList> all_remote_regions;
+    std::unordered_map<TableID, std::vector<pingcap::kv::RegionVerID>> all_remote_regions;
     UInt64 region_num = 0;
-    for (auto physical_table_id : table_scan.getPhysicalTableIDs())
-    {
-        const auto & table_regions_info = context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
 
-        RUNTIME_CHECK_MSG(
-            table_regions_info.local_regions.empty(),
-            "in disaggregated_compute_mode, local_regions should be empty");
-        region_num += table_regions_info.remote_regions.size();
-        for (const auto & region : table_regions_info.remote_regions)
-            all_remote_regions[physical_table_id].emplace_back(std::cref(region));
+    std::vector<UInt64> physical_table_ids;
+    std::vector<pingcap::coprocessor::KeyRanges> ranges_for_each_physical_table;
+    physical_table_ids.reserve(remote_table_ranges.size());
+    ranges_for_each_physical_table.reserve(remote_table_ranges.size());
+    for (const auto & remote_table_range : remote_table_ranges)
+    {
+        physical_table_ids.emplace_back(remote_table_range.first);
+        ranges_for_each_physical_table.emplace_back(remote_table_range.second);
     }
+    pingcap::kv::Cluster * cluster = context.getTMTContext().getKVCluster();
+    pingcap::kv::Backoffer bo(pingcap::kv::copBuildTaskMaxBackoff);
+    auto & region_cache = cluster->region_cache;
+    for (auto idx = 0; idx < int(ranges_for_each_physical_table.size()); idx++)
+    {
+        const auto physical_table_id = physical_table_ids[idx];
+        const auto ranges = ranges_for_each_physical_table[idx];
+        const auto locations = pingcap::coprocessor::details::splitKeyRangesByLocations(region_cache, bo, ranges);
+        for (const auto & location : locations)
+        {
+            pingcap::kv::RegionVerID region_ver_id = location.location.region;
+            all_remote_regions[physical_table_id].push_back(region_ver_id);
+            LOG_INFO(
+                log,
+                "buildProxyReadTask, physical_table_id={}, region_ver_id={}",
+                physical_table_id,
+                region_ver_id.toString());
+            ++region_num;
+        }
+    }
+
     LOG_INFO(log, "region_num={}", region_num);
     std::vector<RNProxyReaderPtr> readers;
-    for (auto physical_table_id : table_scan.getPhysicalTableIDs())
+    for (auto physical_table_id : physical_table_ids)
     {
         const auto & regions = all_remote_regions[physical_table_id];
         for (const auto & region : regions)
         {
-            auto region_id = region.get().region_id;
-            auto region_ver = region.get().region_version;
+            auto region_id = region.id;
+            auto region_ver = region.ver;
+            auto region_conf_ver = region.conf_ver;
             // TODO: sort regions by key range?
+            LOG_INFO(
+                log,
+                "create proxy reader,physical_table_id={}, region_id={}, region_ver={}",
+                physical_table_id,
+                region_id,
+                region_ver);
 
             // Create RNProxyReader for each region and init input streams for each region.
             auto reader_ptr = RNProxyReader::createProxyReader(
@@ -827,6 +905,7 @@ RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTask(
                 physical_table_id,
                 region_id,
                 region_ver,
+                region_conf_ver,
                 start_ts,
                 table_scan);
             readers.push_back(reader_ptr);
@@ -952,6 +1031,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
 void RNProxySourceOp::operateSuffixImpl()
 {
     UNUSED(context);
+    // TODO
     LOG_INFO(log, "Finished reading proxy snapshots, rows={} cost={:.3f}s", action.totalRows(), duration_read_sec);
 }
 

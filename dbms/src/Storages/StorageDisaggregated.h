@@ -85,6 +85,7 @@ public:
 
     // To help find exec summary of ExchangeSender in tiflash_storage and merge it into TableScan's exec summary.
     static const String ExecIDPrefixForTiFlashStorageSender;
+    using RemoteTableRange = std::pair<TableID, pingcap::coprocessor::KeyRanges>;
 
 private:
     // helper functions for building the task read from a shared remote storage system (e.g. S3)
@@ -144,9 +145,7 @@ private:
         const Context & db_context,
         unsigned num_streams);
 
-
 private:
-    using RemoteTableRange = std::pair<TableID, pingcap::coprocessor::KeyRanges>;
     std::tuple<std::vector<RemoteTableRange>, UInt64> buildRemoteTableRanges();
     std::vector<pingcap::coprocessor::BatchCopTask> buildBatchCopTasks(
         const std::vector<RemoteTableRange> & remote_table_ranges,
@@ -204,6 +203,7 @@ public:
         TableID physical_table_id,
         RegionID region_id,
         RegionVersion region_ver,
+        UInt64 region_conf_ver,
         UInt64 start_ts,
         const TiDBTableScan & table_scan);
 
@@ -233,11 +233,19 @@ public:
         return std::shared_ptr<RNProxyReadTask>(new RNProxyReadTask(proxy_readers));
     }
 
+    static RNProxyReadTaskPtr buildProxyReadTaskWithBackoff(
+        const LoggerPtr & log,
+        const Context & context,
+        UInt64 start_ts,
+        const TiDBTableScan & table_scan,
+        const std::vector<StorageDisaggregated::RemoteTableRange> & remote_table_ranges);
+
     static RNProxyReadTaskPtr buildProxyReadTask(
         const LoggerPtr & log,
         const Context & context,
         UInt64 start_ts,
-        const TiDBTableScan & table_scan);
+        const TiDBTableScan & table_scan,
+        const std::vector<StorageDisaggregated::RemoteTableRange> & remote_table_ranges);
 
     BlockInputStreams getInputStreams() const;
 
