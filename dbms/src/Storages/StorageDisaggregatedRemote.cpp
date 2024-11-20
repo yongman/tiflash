@@ -739,11 +739,9 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
                     + std::to_string(region.region_epoch().conf_ver());
             }
             cluster->region_cache->dump();
-            const auto & table_regions_info = context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
-            LOG_INFO(log, "table regions info: {}", table_regions_info.remote_regions.size());
             auto region_ver_id = pingcap::kv::RegionVerID(region_id, region_conf_ver, region_ver);
             cluster->region_cache->dropRegion(region_ver_id);
-            LOG_INFO(log, "create columnar reader failed, epoch not match");
+            LOG_WARNING(log, "create columnar reader failed, epoch not match");
             throw RegionException(
                 std::move(unavailable_regions),
                 RegionException::RegionReadStatus::EPOCH_NOT_MATCH,
@@ -759,15 +757,13 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
                 region_id = region_error.region_not_found().region_id();
                 unavailable_regions.insert(region_id);
                 retry_regions.insert(region_id);
-                LOG_INFO(log, "create columnar reader failed, region not found {}", region_id);
+                LOG_WARNING(log, "create columnar reader failed, region not found {}", region_id);
             }
             else
             {
-                LOG_INFO(log, "create columnar reader failed, {}", region_error.ShortDebugString());
+                LOG_WARNING(log, "create columnar reader failed, {}", region_error.ShortDebugString());
             }
-            const auto & table_regions_info = context.getDAGContext()->getTableRegionsInfoByTableID(physical_table_id);
             cluster->region_cache->dump();
-            LOG_INFO(log, "table regions info: {}", table_regions_info.remote_regions.size());
             auto region_ver_id = pingcap::kv::RegionVerID(region_id, region_conf_ver, region_ver);
             cluster->region_cache->dropRegion(region_ver_id);
             throw RegionException(
@@ -787,17 +783,17 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         std::vector<uint64_t> pushed;
         std::vector<pingcap::kv::LockPtr> locks{std::make_shared<pingcap::kv::Lock>(lock_info)};
         auto before_expired = cluster->lock_resolver->resolveLocks(bo, start_ts, locks, pushed);
-        LOG_INFO(log, "Finished resolve locks, before_expired={}", before_expired);
+        LOG_WARNING(log, "Finished resolve locks, before_expired={}", before_expired);
         throw Exception("lock error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
     else if (columnar_reader.error_type == ColumnarReaderErrorType::PdClientError)
     {
-        LOG_INFO(log, "create columnar reader failed, pd client error");
+        LOG_WARNING(log, "create columnar reader failed, pd client error");
         throw Exception("pd client error", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
     else if (columnar_reader.error_type != ColumnarReaderErrorType::OK)
     {
-        LOG_INFO(log, "create columnar reader, other error_type {}", uint8_t(columnar_reader.error_type));
+        LOG_WARNING(log, "create columnar reader, other error_type {}", uint8_t(columnar_reader.error_type));
         throw Exception("unknown error type", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
 
@@ -832,7 +828,14 @@ RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTaskWithBackoff(
         }
         catch (RegionException & e)
         {
-            LOG_ERROR(log, "buildProxyReadTask failed, backoff and retry, {}", e.message());
+            LOG_WARNING(log, "buildProxyReadTask failed, backoff and retry, {}", e.message());
+            bo.backoff(pingcap::kv::boRegionMiss, pingcap::Exception(e.message(), e.code()));
+        }
+        catch (Exception & e)
+        {
+            if (e.code() != ErrorCodes::COLUMNAR_SNAPSHOT_ERROR)
+                throw;
+            LOG_WARNING(log, "buildProxyReadTask failed, backoff and retry, {}", e.message());
             bo.backoff(pingcap::kv::boRegionMiss, pingcap::Exception(e.message(), e.code()));
         }
     }
@@ -871,7 +874,7 @@ RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTask(
         {
             pingcap::kv::RegionVerID region_ver_id = location.location.region;
             all_remote_regions[physical_table_id].push_back(region_ver_id);
-            LOG_INFO(
+            LOG_DEBUG(
                 log,
                 "buildProxyReadTask, physical_table_id={}, region_ver_id={}",
                 physical_table_id,
@@ -891,7 +894,7 @@ RNProxyReadTaskPtr RNProxyReadTask::buildProxyReadTask(
             auto region_ver = region.ver;
             auto region_conf_ver = region.conf_ver;
             // TODO: sort regions by key range?
-            LOG_INFO(
+            LOG_DEBUG(
                 log,
                 "create proxy reader,physical_table_id={}, region_id={}, region_ver={}",
                 physical_table_id,
@@ -964,7 +967,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     MutableColumns columns = header.cloneEmptyColumns();
     for (UInt32 i = 0; i < col_type_and_name.size(); ++i)
     {
-        LOG_INFO(
+        LOG_DEBUG(
             log,
             "Read column id={} name={} type={}",
             col_type_and_name[i].column_id,
@@ -998,7 +1001,6 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
             String col_data_str(col_data.buff.data, col_data.buff.len);
             // Deserialize column data to column
             ReadBufferFromString buf(col_data_str);
-            LOG_INFO(log, "Read column data length={}", col_data_str.length());
 
             auto & col = *columns[i];
             col_type_and_name[i].type->deserializeBinaryBulkWithMultipleStreams(
@@ -1008,16 +1010,9 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
                 0,
                 true,
                 {});
-            LOG_INFO(log, "Read column data done, col size={}", col.size());
+            LOG_DEBUG(log, "Read column data done, col size={}", col.size());
             RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type);
         }
-    }
-
-    for (UInt32 i = 0; i < col_type_and_name.size(); ++i)
-    {
-        auto & col = *columns[i];
-        Int64 col_id = col_type_and_name[i].column_id;
-        LOG_INFO(log, "Check read column data done, col id={} size={}", col_id, col.size());
     }
 
     Block block = header.cloneWithColumns(std::move(columns));
@@ -1031,8 +1026,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
 void RNProxySourceOp::operateSuffixImpl()
 {
     UNUSED(context);
-    // TODO
-    LOG_INFO(log, "Finished reading proxy snapshots, rows={} cost={:.3f}s", action.totalRows(), duration_read_sec);
+    LOG_INFO(log, "Finished reading proxy snapshots, rows={} cost={:.3f}s", total_rows, duration_read_sec);
 }
 
 void RNProxySourceOp::operatePrefixImpl()
@@ -1075,7 +1069,6 @@ OperatorStatus RNProxySourceOp::awaitImpl()
 
 OperatorStatus RNProxySourceOp::executeIOImpl()
 {
-    LOG_INFO(log, "executeIOImpl");
     if unlikely (done || t_block.has_value())
     {
         return OperatorStatus::HAS_OUTPUT;
@@ -1087,15 +1080,17 @@ OperatorStatus RNProxySourceOp::executeIOImpl()
     }
 
     FilterPtr filter_ignored = nullptr;
+    Stopwatch w{CLOCK_MONOTONIC_COARSE};
     Block block = task->getProxyReaders()[current_reader_idx]->getInputStream()->read(filter_ignored, false);
+    duration_read_sec += w.elapsedSeconds();
     if likely (block && block.rows() > 0)
     {
+        total_rows += block.rows();
         t_block.emplace(std::move(block));
         return OperatorStatus::HAS_OUTPUT;
     }
     else
     {
-        LOG_INFO(log, "executeIOImpl awaitImpl");
         if (current_reader_idx == Int32(task->getProxyReaders().size() - 1))
         {
             done = true;

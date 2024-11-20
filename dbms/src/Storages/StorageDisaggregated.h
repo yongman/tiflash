@@ -354,6 +354,7 @@ private:
     const LoggerPtr log;
     RNProxyReadTaskPtr task;
     AddExtraTableIDColumnTransformAction action;
+    size_t total_rows = 0;
 
     Int32 current_reader_idx = -1;
 
