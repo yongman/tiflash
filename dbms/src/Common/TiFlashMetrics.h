@@ -396,6 +396,7 @@ namespace DB
       F(type_failed_other, {{"type", "failed_other"}}),                                                                             \
       F(type_failed_cancel, {{"type", "failed_cancel"}}),                                                                           \
       F(type_failed_no_suitable, {{"type", "failed_no_suitable"}}),                                                                 \
+      F(type_failed_no_candidate, {{"type", "failed_no_candidate"}}),                                                               \
       F(type_failed_timeout, {{"type", "failed_timeout"}}),                                                                         \
       F(type_failed_baddata, {{"type", "failed_baddata"}}),                                                                         \
       F(type_failed_repeated, {{"type", "failed_repeated"}}),                                                                       \
