@@ -67,7 +67,9 @@ class RegionKVStoreOldTestFAP : public KVStoreTestBase
 public:
     void SetUp() override
     {
+        DB::tests::TiFlashTestEnv::enableS3Config();
         auto & global_context = TiFlashTestEnv::getGlobalContext();
+        global_context.getTMTContext().initS3GCManager(nullptr);
         // clean data and create path pool instance
         path_pool = TiFlashTestEnv::createCleanPathPool(test_path);
 
@@ -109,6 +111,7 @@ public:
 
         global_context.getSharedContextDisagg()->initFastAddPeerContext(25);
         proxy_instance = std::make_unique<MockRaftStoreProxy>();
+        proxy_instance->proxy_config_string = R"({"raftstore":{"snap-handle-pool-size":3}})";
         proxy_helper = proxy_instance->generateProxyHelper();
         KVStoreTestBase::reloadKVSFromDisk(false);
         {

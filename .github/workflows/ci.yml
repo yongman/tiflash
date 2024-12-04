@@ -117,6 +117,7 @@ jobs:
           chmod +x /tmp/gtests_dbms
           cd /tmp
           /tmp/gtests_dbms --gtest_filter="Vector*:FileCacheTest*:DeltaMergeStoreVectorTest*:SchemaSyncTest*:LocalIndexInfoTest*:LocalDMFile*:*UniPageStorageRemoteReadTest*" 2>/tmp/gtests_dbms.log
+          /tmp/gtests_dbms --gtest_filter="RegionKVStoreOldTestFAP.Restore*:RegionKVStoreOldTestFAP.Cancel*" 2>>/tmp/gtests_dbms.log
 
       - name: Detailed Test Log
         if: failure()
