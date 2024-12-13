@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <Common/Checksum.h>
 #include <Encryption/MockKeyManager.h>
 #include <Interpreters/Context.h>
 #include <Poco/ConsoleChannel.h>
@@ -812,6 +813,32 @@ private:
         error_msg.append("Please use `--query_table_id` + `--page_id` to get the more error info.");
 
         return error_msg.toString();
+    }
+
+    static String getBlobData(
+        typename Trait::BlobStore & blob_store,
+        BlobFileId blob_id,
+        BlobFileOffset offset,
+        size_t size)
+    {
+        auto page_id = []() {
+            if constexpr (std::is_same_v<Trait, u128::PageStorageControlV3Trait>)
+                return PageIdV3Internal(0, 0);
+            else
+                return UniversalPageId("");
+        }();
+        char * buffer = new char[size];
+        blob_store.read(page_id, blob_id, offset, buffer, size, nullptr, false);
+
+        using ChecksumClass = Digest::CRC64;
+        ChecksumClass digest;
+        digest.update(buffer, size);
+        auto checksum = digest.checksum();
+        fmt::println("checksum: 0x{:X}", checksum);
+
+        auto hex_str = Redact::keyToHexString(buffer, size);
+        delete[] buffer;
+        return hex_str;
     }
 
 private:

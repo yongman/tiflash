@@ -167,13 +167,26 @@ public:
 
     struct SegmentMetaInfo
     {
-        SegmentFormat::Version version;
-        UInt64 epoch;
+        SegmentFormat::Version version{};
+        UInt64 epoch{};
         RowKeyRange range;
-        PageIdU64 segment_id;
-        PageIdU64 next_segment_id;
-        PageIdU64 delta_id;
-        PageIdU64 stable_id;
+        PageIdU64 segment_id{};
+        PageIdU64 next_segment_id{};
+        PageIdU64 delta_id{};
+        PageIdU64 stable_id{};
+
+        String toString() const
+        {
+            return fmt::format(
+                "{{version={} epoch={} range={} segment_id={} next_segment_id={} delta_id={} stable_id={}}}",
+                version,
+                epoch,
+                range.toString(),
+                segment_id,
+                next_segment_id,
+                delta_id,
+                stable_id);
+        }
     };
 
     using SegmentMetaInfos = std::vector<SegmentMetaInfo>;
