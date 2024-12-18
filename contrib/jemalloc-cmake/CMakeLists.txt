@@ -114,7 +114,7 @@ elseif (APPLE)
     set (JEMALLOC_INCLUDE_PREFIX "include_darwin")
 
     # Jemalloc is not supposed to replace `malloc`/`free`/etc. on MacOS.
-    # So we should explicitly prefix the jemalloc symbols.
+    # So we should explicitly prefix the jemalloc symbols. 
     # See https://github.com/jemalloc/jemalloc/blob/1978e5cdac731dca43b62e4b03612c0758f7cece/INSTALL.md?plain=1#L92-L94
     set (JEMALLOC_PREFIX "je_")
     set (JEMALLOC_CPREFIX "JE_")
