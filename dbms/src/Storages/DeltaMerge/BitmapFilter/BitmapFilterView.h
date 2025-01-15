@@ -52,27 +52,21 @@ public:
         return BitmapFilterView(filter, filter_offset + offset, size);
     }
 
+    IColumn::Filter getRawSubFilter(UInt32 offset, UInt32 size) const
+    {
+        RUNTIME_CHECK(offset + size <= filter_size, offset, size, filter_size);
+        return IColumn::Filter{
+            filter->filter.data() + filter_offset + offset,
+            filter->filter.data() + filter_offset + offset + size};
+    }
+
     // Caller should ensure n in [0, size).
     inline bool get(UInt32 n) const { return filter->get(filter_offset + n); }
 
     inline bool operator[](UInt32 n) const { return get(n); }
-
     inline UInt32 size() const { return filter_size; }
 
     inline UInt32 offset() const { return filter_offset; }
-
-    String toDebugString() const
-    {
-        String s(size(), '1');
-        for (UInt32 i = 0; i < size(); i++)
-        {
-            if (!get(i))
-            {
-                s[i] = '0';
-            }
-        }
-        return s;
-    }
 };
 
 } // namespace DB::DM

@@ -14,12 +14,11 @@
 
 #include <Storages/DeltaMerge/BitmapFilter/BitmapFilter.h>
 #include <Storages/DeltaMerge/DeltaMergeHelpers.h>
-#include <Storages/DeltaMerge/Segment.h>
 
 namespace DB::DM
 {
 BitmapFilter::BitmapFilter(UInt32 size_, bool default_value)
-    : filter(size_, default_value)
+    : filter(size_, static_cast<UInt8>(default_value))
     , all_match(default_value)
 {}
 
@@ -30,45 +29,38 @@ void BitmapFilter::set(BlockInputStreamPtr & stream)
     {
         FilterPtr f = nullptr;
         auto blk = stream->read(f, /*res_filter*/ true);
-        if (likely(blk))
-        {
-            set(blk.segmentRowIdCol(), f);
-        }
-        else
+        if (unlikely(!blk))
         {
             break;
         }
+
+        const auto & row_ids_col = blk.segmentRowIdCol();
+        const auto * v = toColumnVectorDataPtr<UInt32>(row_ids_col);
+        assert(v != nullptr); // the segmentRowIdCol must be a UInt32 column
+        set(std::span{v->data(), v->size()}, f);
     }
     stream->readSuffix();
 }
 
-void BitmapFilter::set(const ColumnPtr & col, const FilterPtr & f)
+void BitmapFilter::set(std::span<const UInt32> row_ids, const FilterPtr & f)
 {
-    const auto * v = toColumnVectorDataPtr<UInt32>(col);
-    set(v->data(), v->size(), f);
-}
-
-void BitmapFilter::set(const UInt32 * data, UInt32 size, const FilterPtr & f)
-{
-    if (size == 0)
+    if (row_ids.empty())
     {
         return;
     }
     if (!f)
     {
-        for (UInt32 i = 0; i < size; i++)
+        for (auto row_id : row_ids)
         {
-            UInt32 row_id = *(data + i);
             filter[row_id] = true;
         }
     }
     else
     {
-        RUNTIME_CHECK(size == f->size(), size, f->size());
-        for (UInt32 i = 0; i < size; i++)
+        RUNTIME_CHECK(row_ids.size() == f->size(), row_ids.size(), f->size());
+        for (UInt32 i = 0; i < row_ids.size(); ++i)
         {
-            UInt32 row_id = *(data + i);
-            filter[row_id] = (*f)[i];
+            filter[row_ids[i]] = (*f)[i];
         }
     }
 }
@@ -76,7 +68,7 @@ void BitmapFilter::set(const UInt32 * data, UInt32 size, const FilterPtr & f)
 void BitmapFilter::set(UInt32 start, UInt32 limit, bool value)
 {
     RUNTIME_CHECK(start + limit <= filter.size(), start, limit, filter.size());
-    std::fill(filter.begin() + start, filter.begin() + start + limit, value);
+    std::fill_n(filter.begin() + start, limit, static_cast<UInt8>(value));
 }
 
 bool BitmapFilter::get(IColumn::Filter & f, UInt32 start, UInt32 limit) const
@@ -84,7 +76,7 @@ bool BitmapFilter::get(IColumn::Filter & f, UInt32 start, UInt32 limit) const
     RUNTIME_CHECK(start + limit <= filter.size(), start, limit, filter.size());
     auto begin = filter.cbegin() + start;
     auto end = filter.cbegin() + start + limit;
-    if (all_match || std::find(begin, end, false) == end)
+    if (all_match || std::find(begin, end, static_cast<UInt8>(false)) == end)
     {
         return true;
     }
@@ -101,13 +93,13 @@ void BitmapFilter::rangeAnd(IColumn::Filter & f, UInt32 start, UInt32 limit) con
     auto begin = filter.cbegin() + start;
     if (!all_match)
     {
-        std::transform(f.begin(), f.end(), begin, f.begin(), [](const UInt8 a, const bool b) { return a != 0 && b; });
+        std::transform(f.begin(), f.end(), begin, f.begin(), [](const auto a, const auto b) { return a && b; });
     }
 }
 
 void BitmapFilter::runOptimize()
 {
-    all_match = std::find(filter.begin(), filter.end(), false) == filter.end();
+    all_match = std::find(filter.begin(), filter.end(), static_cast<UInt8>(false)) == filter.end();
 }
 
 String BitmapFilter::toDebugString() const
@@ -125,6 +117,6 @@ String BitmapFilter::toDebugString() const
 
 size_t BitmapFilter::count() const
 {
-    return std::count(filter.cbegin(), filter.cend(), true);
+    return std::count(filter.cbegin(), filter.cend(), static_cast<UInt8>(true));
 }
 } // namespace DB::DM
