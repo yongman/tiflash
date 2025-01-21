@@ -151,7 +151,7 @@ jobs:
           echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
 
   cleanup:
-    name: CI Cleanup
+    name: Cleanup
     runs-on: [self-hosted, serverless, X64]
     needs: [unit_test_vector, unit_test_basic]
     if: always()
@@ -164,4 +164,21 @@ jobs:
         if: success()
         run: |
           mc rm minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
- 
+
+  check_format:
+    name: Check format
+    runs-on: [self-hosted, serverless, X64]
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GIT_ACTION_BOT }}
+          fetch-depth: 0
+          clean: false # Preserve build artifacts for reuse
+
+      - name: Check format
+        run: |
+          merge_base=$(git merge-base origin/cloud-engine-on-release-7.5 HEAD)
+          python3 format-diff.py --check_formatted --diff_from $merge_base
