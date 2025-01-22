@@ -4149,8 +4149,6 @@ try
         return filter;
     };
 
-    DB::registerFunctions();
-
     constexpr Int64 num_rows = 128;
     auto filter_all = create_filter(0);
     auto filter_all_data = create_data(0, num_rows);
