@@ -34,7 +34,9 @@
 	url = https://github.com/tikv/client-c.git
 [submodule "contrib/tiflash-proxy"]
 	path = contrib/tiflash-proxy
-	url = https://github.com/tidbcloud/cloud-storage-engine.git
+	# keep it as ssh because it is a private repo
+	url = git@github.com:tidbcloud/cloud-storage-engine.git
+	branch = tiflash-proxy-7.0
 [submodule "contrib/prometheus-cpp"]
 	path = contrib/prometheus-cpp
 	url = https://github.com/jupp0r/prometheus-cpp.git
