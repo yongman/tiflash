@@ -17,14 +17,20 @@ set (TIFLASH_NAME "TiFlash")
 # Release version that follows PD/TiKV/TiDB convention.
 # Variables bellow are important, use `COMMAND_ERROR_IS_FATAL ANY`(since cmake 3.19) to confirm that there is output.
 
-execute_process(
-  # Do not execute with --dirty, because checking dirty state is extremely slow.
-  COMMAND git describe --tags --always
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE TIFLASH_RELEASE_VERSION
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  COMMAND_ERROR_IS_FATAL ANY
-  )
+if(NOT TIFLASH_RELEASE_VERSION)
+  # No pre-defined version, try to get it from git tag
+  execute_process(
+    # Do not execute with --dirty, because checking dirty state is extremely slow.
+    COMMAND git describe --tags --always
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE TIFLASH_RELEASE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY
+    )
+  message(STATUS "Using release version from git, TIFLASH_RELEASE_VERSION:${TIFLASH_RELEASE_VERSION}")
+else ()
+  message(STATUS "Using pre-defined release version, TIFLASH_RELEASE_VERSION:${TIFLASH_RELEASE_VERSION}")
+endif ()
 
 # Extract the major version number
 string(REGEX REPLACE "^v([0-9]+).*" "\\1" TIFLASH_VERSION_MAJOR ${TIFLASH_RELEASE_VERSION})

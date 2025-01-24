@@ -7,6 +7,10 @@ on:
         description: "update daily-run test image"
         type: boolean
         default: false
+      update_dedicated_image:
+        description: "update dedicated test image"
+        type: boolean
+        default: false
       update_cn_image:
         description: create a PR to update CN image
         type: boolean
@@ -32,6 +36,8 @@ jobs:
       # GitHub Action supports color output
       CLICOLOR_FORCE: "1"
       CMAKE_COLOR_DIAGNOSTICS: ON
+      # For dedicated image, use the version v8.5.0
+      PRE_DEF_VERSION: ${{ inputs.update_dedicated_image && 'v8.5.0' || '' }}
     steps:
       - name: Setup minio
         run: |
@@ -87,6 +93,7 @@ jobs:
             -DENABLE_TESTING=OFF \
             -DENABLE_TESTS=OFF \
             -DENABLE_FAILPOINTS=OFF \
+            -DTIFLASH_RELEASE_VERSION=${PRE_DEF_VERSION} \
             -DPREBUILT_LIBS_ROOT=$GITHUB_WORKSPACE/contrib/tiflash-proxy/ \
             -DUSE_INTERNAL_TIFLASH_PROXY=${{ steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY }}
 
@@ -155,14 +162,14 @@ jobs:
           docker manifest push hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}
 
       - name: Login to Harbor (keyspace)
-        if: ${{ inputs.update_daily_run_image }}
+        if: ${{ (inputs.update_daily_run_image) || (inputs.update_dedicated_image) }}
         uses: docker/login-action@v3
         with:
           registry: hub.pingcap.net
           username: "robot$keyspace+cdbot"
           password: ${{ secrets.HARBOR_KEYSPACE_TOKEN }}
 
-      - name: set-additional-tags
+      - name: set-serverless-additional-tags
         if: ${{ inputs.update_daily_run_image }}
         run: |
           # Remove the local manifest entry if it exists
@@ -173,6 +180,18 @@ jobs:
           --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
 
           docker manifest push hub.pingcap.net/keyspace/tiflash:v8.5.0
+
+      - name: set-dedicated-additional-tags
+        if: ${{ inputs.update_dedicated_image }}
+        run: |
+          # Remove the local manifest entry if it exists
+          docker manifest rm hub.pingcap.net/keyspace/tiflash:v8.5.0-cse-dedicated || true
+
+          docker manifest create hub.pingcap.net/keyspace/tiflash:v8.5.0-cse-dedicated \
+          --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-amd64 \
+          --amend hub.pingcap.net/sunxiaoguang/serverless/tiflash:${{ github.sha }}-arm64
+
+          docker manifest push hub.pingcap.net/keyspace/tiflash:v8.5.0-cse-dedicated
 
       - name: Update CN image to track this version
         if: ${{ inputs.update_cn_image }}
