@@ -1,0 +1,527 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::path::Path;
+
+use anyhow::{bail, Result};
+
+/// IndexReader reads index file for full text searching.
+pub struct IndexReader {
+    index_reader: tantivy::IndexReader,
+    query_parser: tantivy::query::QueryParser,
+
+    field_body: tantivy::schema::Field,
+}
+
+impl IndexReader {
+    fn new(directory: impl tantivy::Directory) -> Result<Self> {
+        let mut index = tantivy::Index::open(directory)?;
+        index.set_tokenizers(crate::defaults::DEFAULT_TOKENIZERS.clone());
+
+        let index_reader = index.reader()?;
+        let schema = index.schema();
+        let field_body = schema.get_field("body")?;
+        let query_parser = tantivy::query::QueryParser::for_index(&index, vec![field_body]);
+        Ok(Self {
+            index_reader,
+            query_parser,
+
+            field_body,
+        })
+    }
+
+    /// Creates a new `IndexReader` from index file.
+    /// Parameters use simple primitive types for FFI compatibility.
+    pub fn new_mmap(index_file_path: &str) -> Result<Self> {
+        let directory = crate::MergedFileAsDirectory::from_mmap_file(Path::new(index_file_path))?;
+        Self::new(directory)
+    }
+
+    /// Creates a new `IndexReader` from a memory buffer which holds the index.
+    /// Parameters use simple primitive types for FFI compatibility.
+    pub fn new_memory(index_buffer: Vec<u8>) -> Result<Self> {
+        let directory = crate::MergedFileAsDirectory::from_buffer(index_buffer)?;
+        Self::new(directory)
+    }
+
+    /// Returns the stored content for a doc id.
+    pub fn get(&self, doc_id: u32) -> Result<String> {
+        // TODO: Performance is not measured, possibly need to improve.
+        let searcher = self.index_reader.searcher();
+        let doc = searcher.doc::<tantivy::TantivyDocument>(DocAddress::new(0, doc_id))?;
+        let value = doc
+            .get_first(self.field_body)
+            .ok_or_else(|| anyhow::anyhow!("No value for doc_id={}", doc_id))?;
+        match value {
+            tantivy::schema::OwnedValue::Str(s) => Ok(s.to_owned()),
+            _ => bail!("Unexpected field type for doc_id={}", doc_id),
+        }
+    }
+
+    /// Searches the index for documents matching the query without scoring.
+    /// Parameters use simple primitive types for FFI compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter_bitmap` - Filter each result.
+    pub fn search_no_score(&self, query: &str, filter: &BitmapFilter) -> Result<Vec<u32>> {
+        // TODO: Accept a pre-allocated result buffer for better performance.
+
+        let searcher = self.index_reader.searcher();
+        let segment_readers = searcher.segment_readers();
+        if segment_readers.len() != 1 {
+            bail!("Expected 1 segment, got {}", segment_readers.len());
+        }
+
+        if !filter.match_all {
+            let docs_in_segment = segment_readers[0].max_doc();
+            if (docs_in_segment as usize) != filter.match_partial.len() {
+                bail!(
+                    "Invalid bitmap filter, expected length {}, got {}",
+                    docs_in_segment,
+                    filter.match_partial.len()
+                );
+            }
+        }
+
+        let query = self.query_parser.parse_query(query)?;
+        let weight = query.weight(tantivy::query::EnableScoring::disabled_from_searcher(
+            &searcher,
+        ))?;
+
+        // Note: We use a different impl compare as the simple one to allow early stop:
+        //     weight.for_each_no_score(&segment_readers[0], &mut |docs| { results.extend(docs); })?;
+        // TODO: Support max docs (=10000 by default) like ElasticSearch
+        let mut docset = weight.scorer(&segment_readers[0], 1.0)?;
+        let mut results = Vec::<u32>::with_capacity(docset.size_hint() as usize);
+
+        if filter.match_all {
+            // Fast path, no filtering is applied
+            let mut buffer = [0u32; tantivy::COLLECT_BLOCK_BUFFER_LEN];
+            loop {
+                let filled_n = docset.fill_buffer(&mut buffer);
+                results.extend_from_slice(&buffer[..filled_n]);
+                if filled_n < tantivy::COLLECT_BLOCK_BUFFER_LEN {
+                    break;
+                }
+            }
+        } else {
+            // Slow path: filter rows one by one
+            loop {
+                let docid = docset.doc();
+                if docid == tantivy::TERMINATED {
+                    break;
+                }
+                if filter.match_partial[docid as usize] > 0 {
+                    results.push(docid);
+                }
+                docset.advance();
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+/// For FFI
+fn new_mmap_index_reader(index_file_path: &str) -> Result<Box<IndexReader>> {
+    let instance = IndexReader::new_mmap(index_file_path)?;
+    Ok(Box::new(instance))
+}
+
+/// For FFI
+fn new_memory_index_reader(index_buffer: Vec<u8>) -> Result<Box<IndexReader>> {
+    let instance = IndexReader::new_memory(index_buffer)?;
+    Ok(Box::new(instance))
+}
+
+/// For FFI
+fn new_memory_index_reader_2(index_buffer: &[u8]) -> Result<Box<IndexReader>> {
+    let instance = IndexReader::new_memory(index_buffer.to_vec())?;
+    Ok(Box::new(instance))
+}
+
+pub use ffi::BitmapFilter;
+use tantivy::DocAddress;
+
+impl BitmapFilter<'_> {
+    pub fn all_match() -> Self {
+        Self {
+            match_all: true,
+            match_partial: &[],
+        }
+    }
+
+    pub fn partial_match<'a>(filter: &'a [u8]) -> BitmapFilter<'a> {
+        BitmapFilter {
+            match_all: false,
+            match_partial: filter,
+        }
+    }
+}
+
+#[cxx::bridge(namespace = "ClaraFTS")]
+mod ffi {
+    struct BitmapFilter<'a> {
+        match_all: bool,
+        match_partial: &'a [u8],
+    }
+
+    extern "Rust" {
+        type IndexReader;
+
+        fn new_mmap_index_reader(index_file_path: &str) -> Result<Box<IndexReader>>;
+
+        fn new_memory_index_reader(index_buffer: Vec<u8>) -> Result<Box<IndexReader>>;
+
+        fn new_memory_index_reader_2(index_buffer: &[u8]) -> Result<Box<IndexReader>>;
+
+        fn get(self: &IndexReader, doc_id: u32) -> Result<String>;
+
+        fn search_no_score(
+            self: &IndexReader,
+            query: &str,
+            filter: &BitmapFilter,
+        ) -> Result<Vec<u32>>;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use paste::paste;
+
+    use super::*;
+    use crate::{IndexWriterInMemory, IndexWriterOnDisk};
+
+    macro_rules! write_read_test {
+        ($test_name:ident, $get_writer:ident, $finalize:ident, $body:expr) => {
+            paste! {
+                #[test]
+                fn [< $test_name _on_disk >]() -> Result<()> {
+                    // On-disk test
+                    let dir_guard = tempfile::tempdir()?;
+                    let $get_writer = || {
+                        IndexWriterOnDisk::new(
+                            dir_guard.path().join("test.index").to_str().unwrap(),
+                        )
+                    };
+                    let $finalize = |mut w: IndexWriterOnDisk| {
+                        w.finalize()?;
+                        IndexReader::new_mmap(
+                            dir_guard.path().join("test.index").to_str().unwrap(),
+                        )
+                    };
+                    $body;
+                    Ok(())
+                }
+
+                #[test]
+                fn [< $test_name _in_memory >]() -> Result<()> {
+                    // In-memory test
+                    let $get_writer = || IndexWriterInMemory::new();
+                    let $finalize = |mut w: IndexWriterInMemory| {
+                        let buffer = w.finalize()?;
+                        IndexReader::new_memory(buffer)
+                    };
+                    $body;
+                    Ok(())
+                }
+            }
+        };
+    }
+
+    write_read_test!(test_indexer_basic, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+        w.add_document("Who knew the people would adore me so much?")?;
+        w.add_document("The world is but a stage.")?;
+        w.add_document("Why cry, when you can laugh instead?")?;
+
+        // Just test some basic behaviors to ensure that we can read and search the index.
+        // There are standalone search tests covering case sensitivity, normalization, tokenization, etc.
+        let reader = finalize(w)?;
+        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0]);
+        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![1]);
+        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0, 3]);
+        let results = reader.search_no_score("furina", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+
+        assert_eq!(
+            reader.get(0)?,
+            "Being too popular can be such a hassle".to_owned()
+        );
+        assert_eq!(
+            reader.get(1)?,
+            "Who knew the people would adore me so much?".to_owned()
+        );
+        assert_eq!(reader.get(2)?, "The world is but a stage.".to_owned());
+        assert_eq!(
+            reader.get(3)?,
+            "Why cry, when you can laugh instead?".to_owned()
+        );
+        assert!(reader.get(4).is_err());
+    });
+
+    write_read_test!(test_null, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?; // id=0
+        w.add_null()?;
+        w.add_document("Who knew the people would adore me so much?")?; // id=2
+        w.add_document("The world is but a stage.")?; // id=3
+        w.add_null()?;
+        w.add_null()?;
+        w.add_document("Why cry, when you can laugh instead?")?; // id=6
+
+        // Just test some basic behaviors to ensure that we can read and search the index.
+        // There are standalone search tests covering case sensitivity, normalization, tokenization, etc.
+        let reader = finalize(w)?;
+        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0]);
+        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![2]);
+        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0, 6]);
+        let results = reader.search_no_score("furina", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+
+        assert_eq!(
+            reader.get(0)?,
+            "Being too popular can be such a hassle".to_owned()
+        );
+        assert!(reader.get(1).is_err());
+        assert_eq!(
+            reader.get(2)?,
+            "Who knew the people would adore me so much?".to_owned()
+        );
+        assert_eq!(reader.get(3)?, "The world is but a stage.".to_owned());
+        assert!(reader.get(4).is_err());
+        assert!(reader.get(5).is_err());
+        assert_eq!(
+            reader.get(6)?,
+            "Why cry, when you can laugh instead?".to_owned()
+        );
+    });
+
+    write_read_test!(test_indexer_empty, get_writer, finalize, {
+        let w = get_writer()?;
+        let reader = finalize(w)?;
+        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+    });
+
+    write_read_test!(test_indexer_search_empty, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?; // id=0
+        w.add_null()?;
+        w.add_document("Who knew the people would adore me so much?")?; // id=2
+        w.add_document("The world is but a stage.")?; // id=3
+        w.add_null()?;
+        w.add_null()?;
+        w.add_document("Why cry, when you can laugh instead?")?; // id=6
+
+        // Empty query should not match any document.
+        let reader = finalize(w)?;
+        let results = reader.search_no_score("", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+
+        let results = reader.search_no_score("  ", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+
+        let results = reader.search_no_score("foobar", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+    });
+
+    write_read_test!(test_filter_partial_match, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+        w.add_document("Who knew the people would adore me so much?")?;
+        w.add_document("The world is but a stage.")?;
+        w.add_document("Why cry, when you can laugh instead?")?;
+
+        let reader = finalize(w)?;
+
+        let results = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 1, 0, 1]))?;
+        assert_eq!(results, vec![3]);
+    });
+
+    write_read_test!(test_filter_partial_match_with_null, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_null()?;
+        w.add_null()?;
+        w.add_document("Being too popular can be such a hassle")?; //id=2
+        w.add_null()?;
+        w.add_null()?;
+        w.add_document("Who knew the people would adore me so much?")?; //id=5
+        w.add_document("The world is but a stage.")?; //id=6
+        w.add_document("Why cry, when you can laugh instead?")?; //id=7
+
+        let reader = finalize(w)?;
+
+        let results = reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[1, 1, 0, 0, 0, 0, 0, 0]),
+        )?;
+        assert!(results.is_empty());
+
+        let results = reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[1, 1, 1, 0, 0, 0, 0, 0]),
+        )?;
+        assert_eq!(results, vec![2]);
+
+        let results = reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[1, 1, 1, 0, 1, 1, 1, 0]),
+        )?;
+        assert_eq!(results, vec![2]);
+
+        let results = reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[1, 1, 1, 0, 0, 0, 0, 1]),
+        )?;
+        assert_eq!(results, vec![2, 7]);
+    });
+
+    write_read_test!(test_filter_none_match, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+        w.add_document("Who knew the people would adore me so much?")?;
+        w.add_document("The world is but a stage.")?;
+        w.add_document("Why cry, when you can laugh instead?")?;
+
+        let reader = finalize(w)?;
+
+        let results = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0, 0, 0]))?;
+        assert!(results.is_empty());
+    });
+
+    write_read_test!(test_filter_all_match, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+        w.add_document("Who knew the people would adore me so much?")?;
+        w.add_document("The world is but a stage.")?;
+        w.add_document("Why cry, when you can laugh instead?")?;
+
+        let reader = finalize(w)?;
+
+        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0, 3]);
+    });
+
+    write_read_test!(test_filter_partial_match_length, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+
+        let reader = finalize(w)?;
+
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]));
+        assert!(r.is_err());
+
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]));
+        assert!(r.is_ok());
+
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]));
+        assert!(r.is_err());
+    });
+
+    write_read_test!(
+        test_filter_partial_match_length_with_null,
+        get_writer,
+        finalize,
+        {
+            let mut w = get_writer()?;
+            w.add_null()?;
+            w.add_document("Being too popular can be such a hassle")?;
+
+            // There are 2 documents including the null, so the filter length should be 2.
+
+            let reader = finalize(w)?;
+
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]));
+            assert!(r.is_err());
+
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]));
+            assert!(r.is_err());
+
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]));
+            assert!(r.is_ok());
+
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0, 0]));
+            assert!(r.is_err());
+        }
+    );
+
+    write_read_test!(test_indexer_abandon, get_writer, finalize, {
+        let mut w = get_writer()?;
+        w.add_document("Being too popular can be such a hassle")?;
+        // w.finalize() is not called. Should be fine.
+        drop(w);
+
+        _ = finalize;
+    });
+
+    #[test]
+    fn test_on_disk_abandon_cleanup() -> Result<()> {
+        let dir_guard = tempfile::tempdir()?;
+        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        w.add_document("Being too popular can be such a hassle")?;
+        assert!(dir_guard.path().read_dir()?.count() > 0);
+
+        // w.finalize() is not called. Immediate files should be cleaned up.
+        drop(w);
+        assert_eq!(0, dir_guard.path().read_dir()?.count());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_on_disk_overwrite() -> Result<()> {
+        let dir_guard = tempfile::tempdir()?;
+        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        w.add_document("Being too popular can be such a hassle")?;
+        w.finalize()?;
+
+        // There should be only one test.index file in the directory.
+        assert_eq!(1, dir_guard.path().read_dir()?.count());
+
+        // Overwrite the index in serial is allowed. The later one takes effect.
+        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        w.add_document("Who knew the people would adore me so much?")?;
+        w.finalize()?;
+        assert_eq!(1, dir_guard.path().read_dir()?.count());
+
+        let reader = IndexReader::new_mmap(dir_guard.path().join("test.index").to_str().unwrap())?;
+        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        assert!(results.is_empty());
+        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        assert_eq!(results, vec![0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_on_disk_open_invalid() -> Result<()> {
+        let dir_guard = tempfile::tempdir()?;
+
+        // Open a non-index file should fail.
+        let reader = IndexReader::new_mmap(dir_guard.path().join("test.index2").to_str().unwrap());
+        assert!(reader.is_err());
+
+        Ok(())
+    }
+}
