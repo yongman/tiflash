@@ -82,8 +82,8 @@ void ColumnFilePersistedSet::checkColumnFiles(const ColumnFilePersisteds & new_c
         new_deletes,
         rows.load(),
         deletes.load(),
-        columnFilesToString(persisted_files),
-        columnFilesToString(new_column_files));
+        ColumnFile::filesToString(persisted_files),
+        ColumnFile::filesToString(new_column_files));
 }
 
 ColumnFilePersistedSet::ColumnFilePersistedSet( //
@@ -193,7 +193,7 @@ ColumnFilePersisteds ColumnFilePersistedSet::diffColumnFiles(const ColumnFiles &
             log,
             "{}, Delta Check head failed, unexpected size. head column files: {}, persisted column files: {}",
             info(),
-            columnFilesToString(previous_column_files),
+            ColumnFile::filesToString(previous_column_files),
             detailInfo());
         throw Exception("Check head failed, unexpected size", ErrorCodes::LOGICAL_ERROR);
     }
