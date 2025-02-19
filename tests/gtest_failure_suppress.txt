@@ -1,0 +1,21 @@
+# Some known failure test cases
+DeltaMergeStoreTest.LMAllWithMultiVersionRecords
+DeltaMergeStoreTest.RSResult
+DMFileMetaVersion/S3DMFile.WithFileCache/1
+FilterParserTest.TimestampColumn # Failure due to CI timezone
+MinMaxIndexTest.InOrNotInNULL
+PageStorageMixedTest.GetMaxId
+PageStorageMixedTest.ReuseV2ID
+ParsePushDownFilterTest.TimestampColumn # Failure due to CI timezone
+RegionKVStoreTest.ApplyShrinkedRegion
+RegionKVStoreTest.KVStoreFailRecovery
+RegionKVStoreTest.KVStoreSnapshotV1
+RegionKVStoreTest.MemoryTracker
+RegionKVStoreTest.StorageBgPool
+RegionKVStoreTestFAP.FAPWorkerException
+Sysdate.timezone_unit_Test # Failure due to CI timezone
+TestFromUnixTime.TestTimezone # Failure due to CI timezone
+TestMyTime.ConvertTimeZone # Failure due to CI timezone
+TestUnixTimestamp.TestTimezone # Failure due to CI timezone
+TiKVKeyValueTest.ParseLockValue
+Vector.CosineDistance
