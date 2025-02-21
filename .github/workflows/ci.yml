@@ -127,71 +127,23 @@ jobs:
       - name: Run Tests
         run: |
           chmod +x /tmp/gtests_dbms
-          rm -rf /tmp/gtest_10x_output
           python3 tests/gtest_10x.py \
             --workers=24 --shard_count=3 --shard_index=${{ matrix.worker_id }} \
-            --working_dir=/tmp/gtest_10x_output --skip_list=./tests/gtest_skip.txt --suppress_list=./tests/gtest_failure_suppress.txt \
+            --working_dir=/tmp/gtest_10x_output --suppress_list=./tests/gtest_failure_suppress.txt \
             /tmp/gtests_dbms -- \
             --gtest_catch_exceptions=1
 
-      - name: Detailed Test Log
+      - name: Test Log (Stderr)
         if: failure()
         run: |
-          cat /tmp/gtest_10x_output/test_errors.log
+          LOG_PATH=minio_server/tiflash-cse-ci/ci_unit_test_logs/${{ github.run_id }}/test_stderr.log
+          mc cp /tmp/gtest_10x_output/test_stderr.log $LOG_PATH
+          echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
 
-  # unit_test_vector:
-  #   name: Unit Test (Vector)
-  #   runs-on: [self-hosted, serverless, X64]
-  #   needs: build
-  #   timeout-minutes: 30
-  #   steps:
-  #     - name: Setup minio
-  #       run: |
-  #         mc alias set minio_server ${{ vars.MINIO_ENDPOINT }} ${{ secrets.MINIO_AK }} ${{ secrets.MINIO_SK }}
-
-  #     - name: Download Artifact
-  #       run: |
-  #         mc cp minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms /tmp/gtests_dbms
-
-  #     - name: Run Tests
-  #       run: |
-  #         chmod +x /tmp/gtests_dbms
-  #         cd /tmp
-  #         /tmp/gtests_dbms --gtest_filter="Vector*:FileCacheTest*:DeltaMergeStoreVectorTest*:SchemaSyncTest*:LocalIndexInfoTest*:LocalDMFile*" 2>/tmp/gtests_dbms.log
-
-  #     - name: Detailed Test Log
-  #       if: failure()
-  #       run: |
-  #         LOG_PATH=tiflash-cse-ci/ci_unit_test_log/${{ github.run_id }}/$(date +%s)-gtests_dbms_vector.log
-  #         mc cp /tmp/gtests_dbms.log minio_server/$LOG_PATH
-  #         echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
-
-  # unit_test_basic:
-  #   name: Unit Test (Basic)
-  #   runs-on: [self-hosted, serverless, X64]
-  #   needs: build
-  #   timeout-minutes: 30
-  #   steps:
-  #     - name: Setup minio
-  #       run: |
-  #         mc alias set minio_server ${{ vars.MINIO_ENDPOINT }} ${{ secrets.MINIO_AK }} ${{ secrets.MINIO_SK }}
-
-  #     - name: Download Artifact
-  #       run: |
-  #         mc cp minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms /tmp/gtests_dbms
-
-  #     - name: Run Tests
-  #       run: |
-  #         chmod +x /tmp/gtests_dbms
-  #         cd /tmp
-  #         /tmp/gtests_dbms --gtest_filter="*UniPageStorageRemoteReadTest*:Segment*:SimplePK*:DeltaMerge*:DM*:-SegmentTestS3.*" 2>/tmp/gtests_dbms.log
-
-  #     - name: Detailed Test Log
-  #       if: failure()
-  #       run: |
-  #         LOG_PATH=tiflash-cse-ci/ci_unit_test_log/${{ github.run_id }}/$(date +%s)-gtests_dbms_basic.log
-  #         mc cp /tmp/gtests_dbms.log minio_server/$LOG_PATH
-  #         echo "Download test log: ${{ vars.MINIO_ENDPOINT }}/$LOG_PATH"
+      - name: Test Failure Details (Stdout)
+        if: failure()
+        run: |
+          cat /tmp/gtest_10x_output/test_stdout.log
 
   cleanup:
     name: CI Cleanup
