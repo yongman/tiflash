@@ -1989,7 +1989,10 @@ void DeltaMergeStore::applyLocalIndexChange(const TiDB::TableInfo & new_table_in
 
     // no index is created or dropped
     if (!changeset.new_local_index_infos)
+    {
+        LOG_DEBUG(log, "Local index info does not changed, {}", changeset.toString());
         return;
+    }
 
     {
         // new index created, update the info in-memory thread safety between `getLocalIndexInfosSnapshot`
@@ -1997,8 +2000,10 @@ void DeltaMergeStore::applyLocalIndexChange(const TiDB::TableInfo & new_table_in
         local_index_infos.swap(changeset.new_local_index_infos);
     }
 
+    LOG_INFO(log, "Local index info generated, {}", changeset.toString());
+
     // generate async tasks for building local index for all segments
-    checkAllSegmentsLocalIndex(std::move(changeset.dropped_indexes));
+    checkAllSegmentsLocalIndex(changeset.copyDroppedIndexes());
 }
 
 SortDescription DeltaMergeStore::getPrimarySortDescription() const

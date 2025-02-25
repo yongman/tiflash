@@ -17,6 +17,8 @@
 #include <Storages/KVStore/Types.h>
 #include <TiDB/Schema/VectorIndex.h>
 
+#include <span>
+
 namespace TiDB
 {
 struct TableInfo;
@@ -54,10 +56,53 @@ using LocalIndexInfosSnapshot = std::shared_ptr<const LocalIndexInfos>;
 
 LocalIndexInfosPtr initLocalIndexInfos(const TiDB::TableInfo & table_info, const LoggerPtr & logger);
 
-struct LocalIndexInfosChangeset
+struct ComplexIndexID
 {
+    IndexID index_id;
+    ColumnID column_id;
+};
+
+class LocalIndexInfosChangeset
+{
+public:
     LocalIndexInfosPtr new_local_index_infos;
-    std::vector<IndexID> dropped_indexes;
+    // This vector store all the keep/added/dropped index IDs.
+    // The keep indexes: [0, added_indexes_offset)
+    // The added indexes: [added_indexes_offset, dropped_indexes_offset)
+    // The dropped indexes: [dropped_index_offset, end-of-the-vector)
+    const std::vector<ComplexIndexID> all_indexes;
+    const size_t added_indexes_offset;
+    const size_t dropped_indexes_offset;
+
+public:
+    std::span<const ComplexIndexID> keepIndexes() const
+    {
+        assert(added_indexes_offset <= all_indexes.size());
+        return std::span(all_indexes.begin(), all_indexes.begin() + added_indexes_offset);
+    }
+    std::span<const ComplexIndexID> addedIndexes() const
+    {
+        assert(added_indexes_offset <= dropped_indexes_offset && added_indexes_offset <= all_indexes.size());
+        assert(dropped_indexes_offset <= all_indexes.size());
+        return std::span(all_indexes.begin() + added_indexes_offset, all_indexes.begin() + dropped_indexes_offset);
+    }
+    std::span<const ComplexIndexID> droppedIndexes() const
+    {
+        assert(dropped_indexes_offset <= all_indexes.size());
+        return std::span(all_indexes.begin() + dropped_indexes_offset, all_indexes.end());
+    }
+    std::vector<IndexID> copyDroppedIndexes() const
+    {
+        std::vector<IndexID> r;
+        for (const auto & id : droppedIndexes())
+        {
+            if (id.index_id > DB::EmptyIndexID)
+                r.emplace_back(id.index_id);
+        }
+        return r;
+    }
+
+    String toString() const;
 };
 
 // Generate a changeset according to `existing_indexes` and `new_table_info`

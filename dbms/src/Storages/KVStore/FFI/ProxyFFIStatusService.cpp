@@ -396,7 +396,8 @@ HttpRequestRes HandleHttpRequestSyncSchema(
             status = HttpRequestStatus::ErrorParam;
             return HttpRequestRes{
                 .status = HttpRequestStatus::ErrorParam,
-                .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0}}};
+                .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0}},
+            };
         }
 
         try
@@ -412,7 +413,9 @@ HttpRequestRes HandleHttpRequestSyncSchema(
         if (status != HttpRequestStatus::Ok)
             return HttpRequestRes{
                 .status = status,
-                .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0}}};
+                .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0},
+                },
+            };
     }
 
     std::string err_msg;
@@ -447,12 +450,15 @@ HttpRequestRes HandleHttpRequestSyncSchema(
             .status = HttpRequestStatus::ErrorParam,
             .res = CppStrWithView{
                 .inner = GenRawCppPtr(s, RawCppPtrTypeImpl::String),
-                .view = BaseBuffView{s->data(), s->size()}}};
+                .view = BaseBuffView{s->data(), s->size()},
+            },
+        };
     }
 
     return HttpRequestRes{
         .status = status,
-        .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0}}};
+        .res = CppStrWithView{.inner = GenRawCppPtr(), .view = BaseBuffView{nullptr, 0}},
+    };
 }
 
 using HANDLE_HTTP_URI_METHOD = HttpRequestRes (*)(

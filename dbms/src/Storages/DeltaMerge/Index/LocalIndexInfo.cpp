@@ -26,11 +26,6 @@ extern const char force_not_support_vector_index[];
 namespace DB::DM
 {
 
-struct ComplexIndexID
-{
-    IndexID index_id;
-    ColumnID column_id;
-};
 
 bool operator==(const ComplexIndexID & lhs, const ComplexIndexID & rhs)
 {
@@ -124,6 +119,51 @@ LocalIndexInfosPtr initLocalIndexInfos(const TiDB::TableInfo & table_info, const
     // The same as generate local index infos with no existing_indexes
     return generateLocalIndexInfos(nullptr, table_info, logger).new_local_index_infos;
 }
+
+namespace
+{
+LocalIndexInfosChangeset nothingChanged(
+    const std::unordered_map<ComplexIndexID, size_t, ComplexIndexIDHasher> & original_local_index_id_map)
+{
+    std::vector<ComplexIndexID> all_indexes;
+    all_indexes.reserve(original_local_index_id_map.size());
+    for (const auto & it : original_local_index_id_map)
+        all_indexes.emplace_back(it.first);
+    size_t end_offset = all_indexes.size();
+    return LocalIndexInfosChangeset{
+        .new_local_index_infos = nullptr,
+        .all_indexes = std::move(all_indexes),
+        .added_indexes_offset = end_offset,
+        .dropped_indexes_offset = end_offset,
+    };
+}
+LocalIndexInfosChangeset getChangeset(
+    LocalIndexInfosPtr && new_index_infos,
+    const std::unordered_map<ComplexIndexID, size_t, ComplexIndexIDHasher> & original_local_index_id_map,
+    const std::vector<ComplexIndexID> & newly_added,
+    const std::vector<ComplexIndexID> & newly_dropped)
+{
+    std::vector<ComplexIndexID> all_indexes;
+    all_indexes.reserve(original_local_index_id_map.size() + newly_added.size() + newly_dropped.size());
+    for (const auto & it : original_local_index_id_map)
+        all_indexes.emplace_back(it.first);
+
+    const size_t added_begin_offset = all_indexes.size();
+    for (const auto & id : newly_added)
+        all_indexes.emplace_back(id);
+
+    const size_t dropped_begin_offset = all_indexes.size();
+    for (const auto & id : newly_dropped)
+        all_indexes.emplace_back(id);
+
+    return LocalIndexInfosChangeset{
+        .new_local_index_infos = std::move(new_index_infos),
+        .all_indexes = std::move(all_indexes),
+        .added_indexes_offset = added_begin_offset,
+        .dropped_indexes_offset = dropped_begin_offset,
+    };
+}
+} // namespace
 
 LocalIndexInfosChangeset generateLocalIndexInfos(
     const LocalIndexInfosSnapshot & existing_indexes,
@@ -240,57 +280,37 @@ LocalIndexInfosChangeset generateLocalIndexInfos(
 
     if (newly_added.empty() && newly_dropped.empty())
     {
-        auto get_logging = [&]() -> String {
-            FmtBuffer buf;
-            buf.append("keep=[");
-            buf.joinStr(
-                original_local_index_id_map.begin(),
-                original_local_index_id_map.end(),
-                [](const auto & id, FmtBuffer & fb) {
-                    if (id.first.index_id != EmptyIndexID)
-                        fb.fmtAppend("index_id={}", id.first.index_id);
-                    else
-                        fb.fmtAppend("index_on_column_id={}", id.first.column_id);
-                },
-                ",");
-            buf.append("]");
-            return buf.toString();
-        };
-        LOG_DEBUG(logger, "Local index info does not changed, {}", get_logging());
-        return LocalIndexInfosChangeset{
-            .new_local_index_infos = nullptr,
-        };
+        return nothingChanged(original_local_index_id_map);
     }
 
-    auto get_changed_logging = [&]() -> String {
-        FmtBuffer buf;
-        buf.append("keep=[");
+    return getChangeset(std::move(new_index_infos), original_local_index_id_map, newly_added, newly_dropped);
+}
+
+String LocalIndexInfosChangeset::toString() const
+{
+    FmtBuffer buf;
+    buf.append("keep=[");
+    auto keep_indexes = keepIndexes();
+    buf.joinStr(
+        keep_indexes.begin(),
+        keep_indexes.end(),
+        [](const auto & id, FmtBuffer & fb) {
+            if (id.index_id != EmptyIndexID)
+                fb.fmtAppend("index_id={}", id.index_id);
+            else
+                fb.fmtAppend("index_on_column_id={}", id.column_id);
+        },
+        ",");
+    buf.append("]");
+
+    auto added_indexes = addedIndexes();
+    if (new_local_index_infos != nullptr || !added_indexes.empty())
+    {
+        buf.append(" added=[");
         buf.joinStr(
-            original_local_index_id_map.begin(),
-            original_local_index_id_map.end(),
+            added_indexes.begin(),
+            added_indexes.end(),
             [](const auto & id, FmtBuffer & fb) {
-                if (id.first.index_id != EmptyIndexID)
-                    fb.fmtAppend("index_id={}", id.first.index_id);
-                else
-                    fb.fmtAppend("index_on_column_id={}", id.first.column_id);
-            },
-            ",");
-        buf.append("] added=[");
-        buf.joinStr(
-            newly_added.begin(),
-            newly_added.end(),
-            [](const ComplexIndexID & id, FmtBuffer & fb) {
-                if (id.index_id != EmptyIndexID)
-                    fb.fmtAppend("index_id={}", id.index_id);
-                else
-                    fb.fmtAppend("index_on_column_id={}", id.column_id);
-            },
-            ",");
-        buf.append("] dropped=[");
-        buf.joinStr(
-            newly_dropped.begin(),
-            newly_dropped.end(),
-            [](const ComplexIndexID & id, FmtBuffer & fb) {
                 if (id.index_id != EmptyIndexID)
                     fb.fmtAppend("index_id={}", id.index_id);
                 else
@@ -298,22 +318,24 @@ LocalIndexInfosChangeset generateLocalIndexInfos(
             },
             ",");
         buf.append("]");
-        return buf.toString();
-    };
-    LOG_INFO(logger, "Local index info generated, {}", get_changed_logging());
-
-    // only return the newly dropped index with index_id > EmptyIndexID
-    std::vector<IndexID> dropped_indexes;
-    for (const auto & i : newly_dropped)
-    {
-        if (i.index_id <= EmptyIndexID)
-            continue;
-        dropped_indexes.emplace_back(i.index_id);
     }
-    return LocalIndexInfosChangeset{
-        .new_local_index_infos = new_index_infos,
-        .dropped_indexes = std::move(dropped_indexes),
-    };
+    auto dropped_indexes = droppedIndexes();
+    if (new_local_index_infos != nullptr || !dropped_indexes.empty())
+    {
+        buf.append(" dropped=[");
+        buf.joinStr(
+            dropped_indexes.begin(),
+            dropped_indexes.end(),
+            [](const auto & id, FmtBuffer & fb) {
+                if (id.index_id != EmptyIndexID)
+                    fb.fmtAppend("index_id={}", id.index_id);
+                else
+                    fb.fmtAppend("index_on_column_id={}", id.column_id);
+            },
+            ",");
+        buf.append("]");
+    }
+    return buf.toString();
 }
 
 } // namespace DB::DM
