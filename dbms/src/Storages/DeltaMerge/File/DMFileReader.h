@@ -58,7 +58,7 @@ public:
         // The the MVCC filter version. Used by clean read check.
         UInt64 max_read_version_,
         // filters
-        DMFilePackFilter && pack_filter_,
+        const DMFilePackFilterResultPtr & pack_filter_,
         // caches
         const MarkCachePtr & mark_cache_,
         bool enable_column_cache_,
@@ -186,7 +186,7 @@ private:
     const UInt64 max_read_version;
 
     /// Filters
-    DMFilePackFilter pack_filter;
+    const DMFilePackFilterResultPtr pack_filter;
 
     /// Caches
     MarkCachePtr mark_cache;

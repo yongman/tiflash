@@ -210,6 +210,8 @@ public:
 
     UInt32 metaVersion() const { return meta->metaVersion(); }
 
+    bool isColIndexExist(const ColId & col_id) const;
+
 private:
     DMFile(
         UInt64 file_id_,
@@ -291,8 +293,6 @@ private:
 
     String colIndexCacheKey(const FileNameBase & file_name_base) const;
     String colMarkCacheKey(const FileNameBase & file_name_base) const;
-
-    bool isColIndexExist(const ColId & col_id) const;
 
     String encryptionBasePath() const;
     EncryptionPath encryptionDataPath(const FileNameBase & file_name_base) const;

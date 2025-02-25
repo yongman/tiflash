@@ -240,7 +240,7 @@ public:
         const ColumnDefines & columns_to_read,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size,
         bool need_row_id = false);
@@ -249,7 +249,7 @@ public:
         const DMContext & dm_context,
         const ColumnDefines & columns_to_read,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter = {},
+        const DMFilePackFilterResults & pack_filter_results = {},
         UInt64 start_ts = std::numeric_limits<UInt64>::max(),
         size_t expected_block_size = DEFAULT_BLOCK_SIZE);
 
@@ -271,7 +271,7 @@ public:
         const ColumnDefines & columns_to_read,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         size_t expected_block_size = DEFAULT_BLOCK_SIZE);
 
     BlockInputStreamPtr getInputStreamModeRaw(
@@ -685,13 +685,13 @@ public:
         const DMContext & dm_context,
         const ColumnDefines & read_columns,
         const RowKeyRanges & rowkey_ranges,
-        const RSOperatorPtr & filter,
         const StableSnapshotPtr & stable_snap,
         const DeltaValueReaderPtr & delta_reader,
         const DeltaIndexIterator & delta_index_begin,
         const DeltaIndexIterator & delta_index_end,
         size_t expected_block_size,
         ReadTag read_tag,
+        const DMFilePackFilterResults & pack_filter_results = {},
         UInt64 start_ts = std::numeric_limits<UInt64>::max(),
         bool need_row_id = false);
 
@@ -735,21 +735,21 @@ public:
         const DMContext & dm_context,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
     BitmapFilterPtr buildBitmapFilterNormal(
         const DMContext & dm_context,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
     BitmapFilterPtr buildBitmapFilterStableOnly(
         const DMContext & dm_context,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
     SkippableBlockInputStreamPtr getConcatSkippableBlockInputStream(
@@ -759,6 +759,7 @@ public:
         const ColumnDefines & columns_to_read,
         const RowKeyRanges & read_ranges,
         const RSOperatorPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size,
         ReadTag read_tag);
@@ -768,6 +769,7 @@ public:
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
         const PushDownFilterPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t build_bitmap_filter_block_rows,
         size_t read_data_block_rows);
@@ -779,6 +781,7 @@ public:
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & data_ranges,
         const PushDownFilterPtr & filter,
+        const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
 
