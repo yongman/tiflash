@@ -16,9 +16,9 @@
 
 #include <Common/FieldVisitors.h>
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
+#include <Storages/DeltaMerge/Index/LocalIndex_fwd.h>
 #include <Storages/DeltaMerge/Index/RSIndex.h>
 #include <Storages/DeltaMerge/Index/RSResult.h>
-#include <Storages/DeltaMerge/Index/VectorIndex_fwd.h>
 
 namespace DB
 {
