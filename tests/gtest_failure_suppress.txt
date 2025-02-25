@@ -34,7 +34,7 @@ JoinExecutorTestRunner.ScanHashMapAfterProbeData
 MinMaxIndexTest.InOrNotInNULL
 MinMaxIndexTest.Or
 PageStorageTest.GCWithWriteLimiter
-ParsePushDownFilterTest.TimestampColumn
+ParsePushDownExecutorTest.TimestampColumn
 RegionKVStoreTest.ApplyShrinkedRegion
 RegionKVStoreTest.KVStoreSnapshotV1
 RegionKVStoreTest.MemoryTracker
