@@ -28,7 +28,7 @@
 #include <Storages/DeltaMerge/DeltaMergeDefines.h>
 #include <Storages/DeltaMerge/DeltaMergeInterfaces.h>
 #include <Storages/DeltaMerge/File/DMFile_fwd.h>
-#include <Storages/DeltaMerge/Filter/PushDownFilter.h>
+#include <Storages/DeltaMerge/Filter/PushDownExecutor.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo_fwd.h>
 #include <Storages/DeltaMerge/Remote/DisaggSnapshot_fwd.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
@@ -461,7 +461,7 @@ public:
         const RowKeyRanges & sorted_ranges,
         size_t num_streams,
         UInt64 start_ts,
-        const PushDownFilterPtr & filter,
+        const PushDownExecutorPtr & filter,
         const RuntimeFilteList & runtime_filter_list,
         int rf_max_wait_time_ms,
         const String & tracing_id,
@@ -486,7 +486,7 @@ public:
         const RowKeyRanges & sorted_ranges,
         size_t num_streams,
         UInt64 start_ts,
-        const PushDownFilterPtr & filter,
+        const PushDownExecutorPtr & filter,
         const RuntimeFilteList & runtime_filter_list,
         int rf_max_wait_time_ms,
         const String & tracing_id,
@@ -589,7 +589,7 @@ public:
         const Context & db_context,
         bool is_fast_scan,
         bool keep_order,
-        const PushDownFilterPtr & filter);
+        const PushDownExecutorPtr & filter);
 
     // Get a snap of local_index_infos for checking.
     // Note that this is just a shallow copy of `local_index_infos`, do not

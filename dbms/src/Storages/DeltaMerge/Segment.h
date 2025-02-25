@@ -42,8 +42,8 @@ class DeltaValueSpace;
 using DeltaValueSpacePtr = std::shared_ptr<DeltaValueSpace>;
 class RSOperator;
 using RSOperatorPtr = std::shared_ptr<RSOperator>;
-class PushDownFilter;
-using PushDownFilterPtr = std::shared_ptr<PushDownFilter>;
+class PushDownExecutor;
+using PushDownExecutorPtr = std::shared_ptr<PushDownExecutor>;
 
 enum class ReadMode;
 
@@ -231,7 +231,7 @@ public:
         const ColumnDefines & columns_to_read,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const PushDownFilterPtr & filter,
+        const PushDownExecutorPtr & executor,
         UInt64 start_ts,
         size_t expected_block_size);
 
@@ -752,13 +752,23 @@ public:
         const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
-    SkippableBlockInputStreamPtr getConcatSkippableBlockInputStream(
+    // Returns <InputStream, is_vector_stream>
+    std::tuple<SkippableBlockInputStreamPtr, bool> getConcatVectorIndexBlockInputStream(
         BitmapFilterPtr bitmap_filter,
         const SegmentSnapshotPtr & segment_snap,
         const DMContext & dm_context,
         const ColumnDefines & columns_to_read,
         const RowKeyRanges & read_ranges,
-        const RSOperatorPtr & filter,
+        const ANNQueryInfoPtr & ann_query_info,
+        const DMFilePackFilterResults & pack_filter_results,
+        UInt64 start_ts,
+        size_t expected_block_size,
+        ReadTag read_tag);
+    SkippableBlockInputStreamPtr getConcatSkippableBlockInputStream(
+        const SegmentSnapshotPtr & segment_snap,
+        const DMContext & dm_context,
+        const ColumnDefines & columns_to_read,
+        const RowKeyRanges & read_ranges,
         const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size,
@@ -768,7 +778,7 @@ public:
         const ColumnDefines & columns_to_read,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & read_ranges,
-        const PushDownFilterPtr & filter,
+        const PushDownExecutorPtr & executor,
         const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t build_bitmap_filter_block_rows,
@@ -780,7 +790,7 @@ public:
         const ColumnDefines & columns_to_read,
         const SegmentSnapshotPtr & segment_snap,
         const RowKeyRanges & data_ranges,
-        const PushDownFilterPtr & filter,
+        const PushDownExecutorPtr & executor,
         const DMFilePackFilterResults & pack_filter_results,
         UInt64 start_ts,
         size_t expected_block_size);
