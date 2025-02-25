@@ -40,7 +40,7 @@ struct ColumnStat
     size_t array_sizes_bytes = 0;
     size_t array_sizes_mark_bytes = 0;
 
-    std::vector<dtpb::VectorIndexFileProps> vector_index;
+    std::vector<dtpb::DMFileIndexInfo> indexes{};
 
 #ifndef NDEBUG
     // This field is only used for testing
@@ -62,10 +62,11 @@ struct ColumnStat
         stat.set_array_sizes_bytes(array_sizes_bytes);
         stat.set_array_sizes_mark_bytes(array_sizes_mark_bytes);
 
-        for (const auto & vec_idx : vector_index)
+        for (const auto & idx : indexes)
         {
-            auto * pb_idx = stat.add_vector_indexes();
-            pb_idx->CopyFrom(vec_idx);
+            integrityCheckIndexInfoV2(idx);
+            auto * pb_idx = stat.add_indexes();
+            pb_idx->CopyFrom(idx);
         }
 
 #ifndef NDEBUG
@@ -89,19 +90,43 @@ struct ColumnStat
         array_sizes_bytes = proto.array_sizes_bytes();
         array_sizes_mark_bytes = proto.array_sizes_mark_bytes();
 
-        if (proto.has_vector_index())
+        // Backward compatibility: There is a `vector_index` field.
+        if unlikely (proto.has_deprecated_vector_index())
         {
-            // For backward compatibility, loaded `vector_index` into `vector_indexes`
-            // with index_id == EmptyIndexID
-            vector_index.emplace_back(proto.vector_index());
-            auto & idx = vector_index.back();
-            idx.set_index_id(EmptyIndexID);
-            idx.set_index_bytes(index_bytes);
+            auto idx = dtpb::DMFileIndexInfo{};
+            auto * idx_props = idx.mutable_index_props();
+            idx_props->set_kind(dtpb::IndexFileKind::VECTOR_INDEX);
+            idx_props->set_index_id(EmptyIndexID);
+            idx_props->set_file_size(index_bytes);
+            auto * vector_idx_props = idx_props->mutable_vector_index();
+            vector_idx_props->set_format_version(0);
+            vector_idx_props->set_dimensions(proto.deprecated_vector_index().dimensions());
+            vector_idx_props->set_distance_metric(proto.deprecated_vector_index().distance_metric());
         }
-        vector_index.reserve(vector_index.size() + proto.vector_indexes_size());
-        for (const auto & pb_idx : proto.vector_indexes())
+
+        // Backward compatibility: There is a `vector_indexes` field.
+        if unlikely (proto.deprecated_vector_indexes_size() > 0)
         {
-            vector_index.emplace_back(pb_idx);
+            for (const auto & old_pb_idx : proto.deprecated_vector_indexes())
+            {
+                auto idx = dtpb::DMFileIndexInfo{};
+                auto * idx_props = idx.mutable_index_props();
+                idx_props->set_kind(dtpb::IndexFileKind::VECTOR_INDEX);
+                idx_props->set_index_id(old_pb_idx.index_id());
+                idx_props->set_file_size(old_pb_idx.index_bytes());
+                auto * vector_idx_props = idx_props->mutable_vector_index();
+                vector_idx_props->set_format_version(0);
+                vector_idx_props->set_dimensions(old_pb_idx.dimensions());
+                vector_idx_props->set_distance_metric(old_pb_idx.distance_metric());
+
+                indexes.emplace_back(std::move(idx));
+            }
+        }
+
+        for (const auto & pb_idx : proto.indexes())
+        {
+            integrityCheckIndexInfoV2(pb_idx);
+            indexes.emplace_back(pb_idx);
         }
 
 #ifndef NDEBUG
@@ -141,6 +166,25 @@ struct ColumnStat
         readIntBinary(nullmap_data_bytes, buf);
         readIntBinary(nullmap_mark_bytes, buf);
         readIntBinary(index_bytes, buf);
+    }
+
+private:
+    static void integrityCheckIndexInfoV2(const dtpb::DMFileIndexInfo & index_info)
+    {
+        RUNTIME_CHECK(index_info.index_props().has_file_size());
+        RUNTIME_CHECK(index_info.index_props().has_index_id());
+        RUNTIME_CHECK(index_info.index_props().has_kind());
+        switch (index_info.index_props().kind())
+        {
+        case dtpb::IndexFileKind::VECTOR_INDEX:
+            RUNTIME_CHECK(index_info.index_props().has_vector_index());
+            break;
+        default:
+            RUNTIME_CHECK_MSG(
+                false,
+                "Unsupported index kind: {}",
+                magic_enum::enum_name(index_info.index_props().kind()));
+        }
     }
 };
 
@@ -184,7 +228,7 @@ readText(ColumnStats & column_sats, DMFileFormat::Version ver, ReadBuffer & buf)
                 .avg_size = avg_size,
                 .serialized_bytes = serialized_bytes,
                 // ... here ignore some fields with default initializers
-                .vector_index = {},
+                .indexes = {},
 #ifndef NDEBUG
                 .additional_data_for_test = {},
 #endif
