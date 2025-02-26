@@ -797,14 +797,26 @@ FastAddPeerRes FastAddPeer(EngineStoreServerWrap * server, uint64_t region_id, u
                 auto prev_state = fap_ctx->tasks_trace->queryState(region_id);
                 LOG_INFO(
                     log,
-                    "Cancel FAP due to timeout region_id={} new_peer_id={} prev_state={}",
+                    "Cancel FAP due to timeout region_id={} new_peer_id={} prev_state={} elapsedMillis={}",
                     region_id,
                     new_peer_id,
-                    magic_enum::enum_name(prev_state));
+                    magic_enum::enum_name(prev_state),
+                    elapsed);
                 GET_METRIC(tiflash_fap_task_state, type_blocking_cancel_stage).Increment();
                 {
                     [[maybe_unused]] auto s = fap_ctx->tasks_trace->blockedCancelRunningTask(region_id);
                 }
+                // Previously, `fap_fallback_to_slow` could do the cleaning job,
+                // however, it will not clean what's in memory.
+                // So, if a msgSnapshot is sent, then a regular raft snapshot handling may be started,
+                // and if the we failed to clean the fap snapshot by `fap_fallback_to_slow` before prehandling,
+                // the process could panic.
+                fap_ctx->cleanTask(
+                    *(server->tmt),
+                    server->proxy_helper,
+                    region_id,
+                    CheckpointIngestInfo::CleanReason::ProxyFallback);
+                LOG_INFO(log, "Finished clean task from proxy region_id={} new_peer_id={}", region_id, new_peer_id);
                 GET_METRIC(tiflash_fap_task_state, type_blocking_cancel_stage).Decrement();
                 // Return Canceled because it is cancel from outside FAP worker.
                 return genFastAddPeerResFail(FastAddPeerStatus::Canceled);
