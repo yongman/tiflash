@@ -35,6 +35,7 @@ MinMaxIndexTest.InOrNotInNULL
 MinMaxIndexTest.Or
 PageStorageTest.GCWithWriteLimiter
 ParsePushDownExecutorTest.TimestampColumn
+Recycle_AllowRetryRead/LogFileRWTest.ManyBlocks/false_true
 RegionKVStoreTest.ApplyShrinkedRegion
 RegionKVStoreTest.KVStoreSnapshotV1
 RegionKVStoreTest.MemoryTracker

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: ["cloud-engine-on-release-8.5", "cloud-engine-on-release-7.5"]
+    branches: ["cloud-engine-on-release-8.5"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -127,9 +127,10 @@ jobs:
       - name: Run Tests
         run: |
           chmod +x /tmp/gtests_dbms
+          export FORCE_COLOR=1
           python3 tests/gtest_10x.py \
             --workers=24 --shard_count=3 --shard_index=${{ matrix.worker_id }} \
-            --working_dir=/tmp/gtest_10x_output --suppress_list=./tests/gtest_failure_suppress.txt \
+            --working_dir=/tmp/gtest_10x_output \
             /tmp/gtests_dbms -- \
             --gtest_catch_exceptions=1
 
@@ -149,7 +150,6 @@ jobs:
     name: CI Cleanup
     runs-on: [self-hosted, serverless, X64]
     needs: [unit_test]
-    if: always()
     steps:
       - name: Setup minio
         run: |
@@ -158,4 +158,22 @@ jobs:
       - name: Clean up artifact
         if: success()
         run: |
-          mc rm minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
+          mc rm minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms || true
+
+  check_format:
+    name: Check format
+    runs-on: [self-hosted, serverless, X64]
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GIT_ACTION_BOT }}
+          fetch-depth: 0
+          clean: false # Preserve build artifacts for reuse
+
+      - name: Check format
+        run: |
+          merge_base=$(git merge-base origin/cloud-engine-on-release-8.5 HEAD)
+          python3 format-diff.py --check_formatted --diff_from $merge_base
