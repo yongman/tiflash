@@ -95,6 +95,7 @@ struct DMContext : private boost::noncopyable
     const bool read_stable_only;
     const bool enable_relevant_place;
     const bool enable_skippable_place;
+    const bool fap_use_segment_to_end_map_cache;
 
     String tracing_id;
 
@@ -138,6 +139,7 @@ public:
         , read_stable_only(settings.dt_read_stable_only)
         , enable_relevant_place(settings.dt_enable_relevant_place)
         , enable_skippable_place(settings.dt_enable_skippable_place)
+        , fap_use_segment_to_end_map_cache(settings.fap_use_segment_to_end_map_cache)
         , tracing_id(tracing_id_)
         , scan_context(scan_context_ ? scan_context_ : std::make_shared<ScanContext>())
     {}

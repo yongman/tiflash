@@ -255,6 +255,7 @@ struct Settings
     M(SettingInt64, fap_wait_checkpoint_timeout_seconds, 80, "The max time wait for a usable checkpoint for FAP")                                                                                                                       \
     M(SettingUInt64, fap_task_timeout_seconds, 120, "The max time FAP can take before fallback")                                                                                                                                        \
     M(SettingUInt64, fap_handle_concurrency, 25, "The number of threads for handling FAP tasks")                                                                                                                                        \
+    M(SettingBool, fap_use_segment_to_end_map_cache, false, "Whether to cache the segment to end map")                                                                                                                                  \
     \
     M(SettingUInt64, max_rows_in_set, 0, "Maximum size of the set (in number of elements) resulting from the execution of the IN section.")                                                                                             \
     M(SettingUInt64, rf_max_in_value_set, 1024, "Maximum size of the set (in number of elements) resulting from the execution of the RF IN Predicate.")                                                                                 \
