@@ -177,3 +177,57 @@ jobs:
         run: |
           merge_base=$(git merge-base origin/cloud-engine-on-release-8.5 HEAD)
           python3 format-diff.py --check_formatted --diff_from $merge_base
+
+  unit_test_libclara:
+    name: Unit Test (libclara)
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [X64, ARM64]
+    runs-on:
+      - self-hosted
+      - serverless # Note: Only repository runners has TiFlash build envs.
+      - ${{ matrix.arch }}
+    timeout-minutes: 60
+    env:
+      # Needed because we don't have gcc in the base image
+      CC: clang
+      CXX: clang++
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GIT_ACTION_BOT }}
+          fetch-depth: 0
+          clean: false # Preserve build artifacts for reuse
+      - name:
+          Install unzip # This is a HACK. We should bundle unzip in the runner Image.
+          # However LLVM has removed Jammy LLVM17 from the mirror, so that
+          # currently we cannot rebuild the runner image.
+        run: |
+          sudo apt update -y
+          sudo apt install -y unzip
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Format
+        run: |
+          cd libs/libclara
+          cargo fmt --check
+      - name: Run Clippy
+        run: |
+          cd libs/libclara
+          cargo clippy --all-targets --all-features
+      - name: Run Build
+        run: |
+          cd libs/libclara
+          cargo build --all-targets --all-features --verbose
+      - name: Run Test
+        run: |
+          cd libs/libclara
+          cargo test --all-targets --all-features --verbose
