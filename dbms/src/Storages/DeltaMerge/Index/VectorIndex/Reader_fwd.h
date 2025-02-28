@@ -14,17 +14,17 @@
 
 #pragma once
 
+#include <tipb/executor.pb.h>
+
 #include <memory>
 
 namespace DB::DM
 {
 
-struct LocalIndexInfo;
+using ANNQueryInfoPtr = std::shared_ptr<tipb::ANNQueryInfo>;
 
-using LocalIndexInfos = std::vector<LocalIndexInfo>;
-using LocalIndexInfosPtr = std::shared_ptr<LocalIndexInfos>;
-using LocalIndexInfosSnapshot = std::shared_ptr<const LocalIndexInfos>;
+class VectorIndexReader;
 
-class LocalIndexInfosChangeset;
+using VectorIndexReaderPtr = std::shared_ptr<VectorIndexReader>;
 
 } // namespace DB::DM
