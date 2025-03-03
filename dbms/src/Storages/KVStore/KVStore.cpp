@@ -33,10 +33,10 @@
 #include <Storages/KVStore/Types.h>
 #include <Storages/StorageDeltaMerge.h>
 #include <common/likely.h>
+#include <common/logger_useful.h>
 
 #include <mutex>
 #include <tuple>
-#include <variant>
 
 namespace DB
 {

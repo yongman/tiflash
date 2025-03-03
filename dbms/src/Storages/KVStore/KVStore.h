@@ -153,11 +153,15 @@ public:
 public: // Region Management
     void restore(PathPool & path_pool, const TiFlashRaftProxyHelper *);
     void gcPersistedRegion(Seconds gc_persist_period = Seconds(60 * 5));
-    RegionPtr getRegion(RegionID region_id) const;
     RegionMap getRegionsByRangeOverlap(const RegionRange & range) const;
     void traverseRegions(std::function<void(RegionID, const RegionPtr &)> && callback) const;
     RegionPtr genRegionPtr(metapb::Region && region, UInt64 peer_id, UInt64 index, UInt64 term);
     void handleDestroy(UInt64 region_id, TMTContext & tmt);
+
+    // `genRegionTaskLock` make public for `GetLockByKey`.
+    // TODO: find a better way to wrap the function?
+    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
+    RegionPtr getRegion(RegionID region_id) const;
 
 public: // Raft Read and Write
     EngineStoreApplyRes handleAdminRaftCmd(
@@ -317,7 +321,6 @@ private:
     RegionManager::RegionReadLock genRegionMgrReadLock() const;
     RegionManager::RegionWriteLock genRegionMgrWriteLock(const KVStoreTaskLock &);
     void handleDestroy(UInt64 region_id, TMTContext & tmt, const KVStoreTaskLock &);
-    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
 
     //  ---- Region Write ----  //
 
