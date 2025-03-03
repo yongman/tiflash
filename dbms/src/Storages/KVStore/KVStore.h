@@ -25,7 +25,6 @@
 #include <Storages/KVStore/MultiRaft/RegionRangeKeys.h>
 #include <Storages/KVStore/StorageEngineType.h>
 
-#include <condition_variable>
 #include <magic_enum.hpp>
 
 namespace TiDB
@@ -157,6 +156,9 @@ public:
 public: // Region Management
     void restore(PathPool & path_pool, const TiFlashRaftProxyHelper *);
 
+    // `genRegionTaskLock` make public for `GetLockByKey`.
+    // TODO: find a better way to wrap the function?
+    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
     RegionPtr getRegion(RegionID region_id) const;
 
     using RegionRange = RegionRangeKeys::RegionRange;
@@ -266,7 +268,6 @@ public: // Region Management
 
     RaftLogEagerGcTasks::Hints getRaftLogGcHints();
     void applyRaftLogGcTaskRes(const RaftLogGcTasksRes & res) const;
-    RegionTaskLock genRegionTaskLock(UInt64 region_id) const;
     size_t getMaxParallelPrehandleSize() const;
     size_t getMaxPrehandleSubtaskSize() const;
 
