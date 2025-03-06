@@ -213,7 +213,7 @@ static ColumnsAndDefaults parseColumns(const ASTExpressionList & column_list_ast
 
         if (col_decl.type)
         {
-            columns.emplace_back(col_decl.name, DataTypeFactory::instance().get(col_decl.type));
+            columns.emplace_back(col_decl.name, DataTypeFactory::instance().getOrSet(col_decl.type));
         }
         else
             /// we're creating dummy DataTypeUInt8 in order to prevent the NullPointerException in ExpressionActions
@@ -289,7 +289,8 @@ static ColumnsAndDefaults parseColumns(const ASTExpressionList & column_list_ast
                 column_name,
                 ColumnDefault{
                     columnDefaultKindFromString(col_decl_ptr->default_specifier),
-                    col_decl_ptr->default_expression});
+                    col_decl_ptr->default_expression,
+                });
         }
     }
 
