@@ -178,12 +178,12 @@ void ColumnFileTiny::serializeMetadata(dtpb::ColumnFilePersisted * cf_pb, bool s
 }
 
 ColumnFilePersistedPtr ColumnFileTiny::deserializeMetadata(
-    const DMContext & context,
+    const DMContext & dm_context,
     ReadBuffer & buf,
     ColumnFileSchemaPtr & last_schema)
 {
     auto schema_block = deserializeSchema(buf);
-    auto schema = getSchema(context, schema_block, last_schema);
+    auto schema = getSchema(dm_context, schema_block, last_schema);
 
     PageIdU64 data_page_id;
     size_t rows, bytes;
@@ -196,7 +196,7 @@ ColumnFilePersistedPtr ColumnFileTiny::deserializeMetadata(
 }
 
 std::shared_ptr<ColumnFileSchema> ColumnFileTiny::getSchema(
-    const DMContext & context,
+    const DMContext & dm_context,
     BlockPtr schema_block,
     ColumnFileSchemaPtr & last_schema)
 {
@@ -206,7 +206,7 @@ std::shared_ptr<ColumnFileSchema> ColumnFileTiny::getSchema(
         schema = last_schema;
     else
     {
-        schema = getSharedBlockSchemas(context)->getOrCreate(*schema_block);
+        schema = getSharedBlockSchemas(dm_context)->getOrCreate(*schema_block);
         last_schema = schema;
     }
 
@@ -216,12 +216,12 @@ std::shared_ptr<ColumnFileSchema> ColumnFileTiny::getSchema(
 }
 
 ColumnFilePersistedPtr ColumnFileTiny::deserializeMetadata(
-    const DMContext & context,
+    const DMContext & dm_context,
     const dtpb::ColumnFileTiny & cf_pb,
     ColumnFileSchemaPtr & last_schema)
 {
     auto schema_block = deserializeSchema(cf_pb.columns());
-    auto schema = getSchema(context, schema_block, last_schema);
+    auto schema = getSchema(dm_context, schema_block, last_schema);
 
     PageIdU64 data_page_id = cf_pb.id();
     size_t rows = cf_pb.rows();
@@ -241,7 +241,7 @@ ColumnFilePersistedPtr ColumnFileTiny::deserializeMetadata(
 
 ColumnFilePersistedPtr ColumnFileTiny::restoreFromCheckpoint(
     const LoggerPtr & parent_log,
-    const DMContext & context,
+    const DMContext & dm_context,
     UniversalPageStoragePtr temp_ps,
     WriteBatches & wbs,
     BlockPtr schema,
@@ -251,10 +251,10 @@ ColumnFilePersistedPtr ColumnFileTiny::restoreFromCheckpoint(
     IndexInfosPtr index_infos)
 {
     auto put_remote_page = [&](PageIdU64 page_id) {
-        auto new_cf_id = context.storage_pool->newLogPageId();
+        auto new_cf_id = dm_context.storage_pool->newLogPageId();
         /// Generate a new RemotePage with an entry with data location on S3
         auto remote_page_id = UniversalPageIdFormat::toFullPageId(
-            UniversalPageIdFormat::toFullPrefix(context.keyspace_id, StorageType::Log, context.physical_table_id),
+            UniversalPageIdFormat::toFullPrefix(dm_context.keyspace_id, StorageType::Log, dm_context.physical_table_id),
             page_id);
         // The `data_file_id` in temp_ps is lock key, we need convert it to data key before write to local ps
         auto remote_data_location = temp_ps->getCheckpointLocation(remote_page_id);
@@ -300,7 +300,7 @@ ColumnFilePersistedPtr ColumnFileTiny::restoreFromCheckpoint(
 
 std::tuple<ColumnFilePersistedPtr, BlockPtr> ColumnFileTiny::createFromCheckpoint(
     const LoggerPtr & parent_log,
-    const DMContext & context,
+    const DMContext & dm_context,
     ReadBuffer & buf,
     UniversalPageStoragePtr temp_ps,
     const BlockPtr & last_schema,
@@ -319,14 +319,14 @@ std::tuple<ColumnFilePersistedPtr, BlockPtr> ColumnFileTiny::createFromCheckpoin
     readIntBinary(bytes, buf);
 
     return {
-        restoreFromCheckpoint(parent_log, context, temp_ps, wbs, schema, data_page_id, rows, bytes, nullptr),
+        restoreFromCheckpoint(parent_log, dm_context, temp_ps, wbs, schema, data_page_id, rows, bytes, nullptr),
         schema,
     };
 }
 
 std::tuple<ColumnFilePersistedPtr, BlockPtr> ColumnFileTiny::createFromCheckpoint(
     const LoggerPtr & parent_log,
-    const DMContext & context,
+    const DMContext & dm_context,
     const dtpb::ColumnFileTiny & cf_pb,
     UniversalPageStoragePtr temp_ps,
     const BlockPtr & last_schema,
@@ -351,7 +351,7 @@ std::tuple<ColumnFilePersistedPtr, BlockPtr> ColumnFileTiny::createFromCheckpoin
     }
 
     return {
-        restoreFromCheckpoint(parent_log, context, temp_ps, wbs, schema, data_page_id, rows, bytes, index_infos),
+        restoreFromCheckpoint(parent_log, dm_context, temp_ps, wbs, schema, data_page_id, rows, bytes, index_infos),
         schema,
     };
 }
@@ -390,29 +390,29 @@ Block ColumnFileTiny::readBlockForMinorCompaction(const PageReader & page_reader
 }
 
 ColumnFileTinyPtr ColumnFileTiny::writeColumnFile(
-    const DMContext & context,
+    const DMContext & dm_context,
     const Block & block,
     size_t offset,
     size_t limit,
     WriteBatches & wbs,
     const CachePtr & cache)
 {
-    auto page_id = writeColumnFileData(context, block, offset, limit, wbs);
+    auto page_id = writeColumnFileData(dm_context, block, offset, limit, wbs);
 
-    auto schema = getSharedBlockSchemas(context)->getOrCreate(block);
+    auto schema = getSharedBlockSchemas(dm_context)->getOrCreate(block);
 
     auto bytes = block.bytes(offset, limit);
     return std::make_shared<ColumnFileTiny>(schema, limit, bytes, page_id, nullptr, cache);
 }
 
 PageIdU64 ColumnFileTiny::writeColumnFileData(
-    const DMContext & context,
+    const DMContext & dm_context,
     const Block & block,
     size_t offset,
     size_t limit,
     WriteBatches & wbs)
 {
-    auto page_id = context.storage_pool->newLogPageId();
+    auto page_id = dm_context.storage_pool->newLogPageId();
 
     MemoryWriteBuffer write_buf;
     PageFieldSizes col_data_sizes;
@@ -425,8 +425,8 @@ PageIdU64 ColumnFileTiny::writeColumnFileData(
             col.type,
             offset,
             limit,
-            context.db_context.getSettingsRef().dt_compression_method,
-            context.db_context.getSettingsRef().dt_compression_level);
+            dm_context.db_context.getSettingsRef().dt_compression_method,
+            dm_context.db_context.getSettingsRef().dt_compression_level);
         size_t serialized_size = write_buf.count() - last_buf_size;
         RUNTIME_CHECK_MSG(
             serialized_size != 0,
