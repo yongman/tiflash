@@ -31,6 +31,7 @@ JoinExecutorTestRunner.CrossJoinWithoutCondition
 JoinExecutorTestRunner.MultiJoin
 JoinExecutorTestRunner.NullAwareSemiJoin
 JoinExecutorTestRunner.ScanHashMapAfterProbeData
+MinMaxIndexTest.And
 MinMaxIndexTest.InOrNotInNULL
 MinMaxIndexTest.Or
 PageStorageTest.GCWithWriteLimiter

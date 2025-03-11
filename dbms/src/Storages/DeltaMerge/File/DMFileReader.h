@@ -30,15 +30,13 @@
 namespace DB::DM
 {
 
-class DMFileWithVectorIndexBlockInputStream;
-
 class RSOperator;
 using RSOperatorPtr = std::shared_ptr<RSOperator>;
 
 
 class DMFileReader
 {
-    friend class DMFileWithVectorIndexBlockInputStream;
+    friend class DMFileInputStreamProvideVectorIndex;
     friend class DMFileReaderPoolSharding;
 
 public:
