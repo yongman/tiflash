@@ -257,6 +257,7 @@ struct Settings
     M(SettingInt64, fap_wait_checkpoint_timeout_seconds, 80, "The max time wait for a usable checkpoint for FAP")                                                                                                                       \
     M(SettingUInt64, fap_task_timeout_seconds, 120, "The max time FAP can take before fallback")                                                                                                                                        \
     M(SettingUInt64, fap_handle_concurrency, 25, "The number of threads for handling FAP tasks. Only has meaning at server startup.")                                                                                                   \
+    M(SettingBool, fap_use_segment_to_end_map_cache, false, "Whether to cache the segment to end map")                                                                                                                                  \
     \
     /* Manual Compact worker settings */ \
     M(SettingUInt64, manual_compact_pool_size, 1, "The number of worker threads to handle manual compact requests. Only has meaning at server startup.")                                                                                \
