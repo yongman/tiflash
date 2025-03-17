@@ -295,6 +295,30 @@ AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::AlibabaCloudSTSAssumeRo
     LOG_INFO(log, "Creating Alibaba Cloud STS AssumeRole with web identity creds provider.");
 }
 
+Aws::String AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::calculateQueryString() const
+{
+    Aws::Map<Aws::String, Aws::String> params;
+    params["Action"] = "AssumeRoleWithOIDC";
+    params["Format"] = "JSON";
+    params["Version"] = "2015-04-01";
+    params["RoleSessionName"] = m_session_name;
+    params["OIDCProviderArn"] = m_oidc_provider_arn;
+    params["RoleArn"] = m_role_arn;
+    params["OIDCToken"] = m_token;
+
+    // build http query_string from params
+    Aws::StringStream ss;
+    for (const auto & [key, value] : params)
+    {
+        ss << key << "=" << value << "&";
+    }
+    Aws::String query_string = ss.str();
+    if (!query_string.empty())
+        query_string.pop_back();
+
+    return query_string;
+}
+
 Aws::Auth::AWSCredentials AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::GetAWSCredentials()
 {
     // A valid client means required information like role arn and token file were constructed correctly.
@@ -312,7 +336,7 @@ void AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::Reload()
 {
     LOG_INFO(
         log,
-        "Credentials have expired, attempting to renew from STS, role_arn={} role_session_name={}.",
+        "Credentials have expired, attempting to renew from Alibaba Cloud STS, role_arn={} role_session_name={}.",
         m_role_arn,
         m_session_name);
 
@@ -327,23 +351,7 @@ void AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::Reload()
         LOG_ERROR(log, "Can't open token file: {}", m_token_file);
         return;
     }
-    Aws::Map<Aws::String, Aws::String> params;
-    params["Action"] = "AssumeRoleWithOIDC";
-    params["Format"] = "JSON";
-    params["Version"] = "2015-04-01";
-    params["RoleSessionName"] = m_session_name;
-    params["OIDCProviderArn"] = m_oidc_provider_arn;
-    params["RoleArn"] = m_role_arn;
-    params["OIDCToken"] = m_token;
-
-    // build http query_string from params
-    Aws::StringStream ss;
-    for (const auto & [key, value] : params)
-    {
-        ss << key << "=" << value << "&";
-    }
-    ss.seekp(-1, std::ios_base::end); // Move the position to the last character and remove the '&'
-    Aws::String query_string = ss.str();
+    Aws::String query_string = calculateQueryString();
 
     // create http request
     auto request = Aws::MakeShared<Aws::Http::Standard::StandardHttpRequest>(
@@ -360,23 +368,33 @@ void AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::Reload()
 
     // parse http response
     auto body = Aws::String(Aws::IStreamBufIterator(response->GetResponseBody()), Aws::IStreamBufIterator());
-    Poco::JSON::Parser parser;
-    Poco::Dynamic::Var result = parser.parse(body);
-    const auto & obj = result.extract<Poco::JSON::Object::Ptr>();
-    if (!obj->has("Credentials"))
+    try
     {
-        LOG_ERROR(log, "Failed to parse response from Alibaba Cloud STS AssumeRole with web identity creds provider.");
+        Poco::JSON::Parser parser;
+        Poco::Dynamic::Var result = parser.parse(body);
+        const auto & obj = result.extract<Poco::JSON::Object::Ptr>();
+        if (!obj->has("Credentials"))
+        {
+            LOG_ERROR(
+                log,
+                "Failed to parse response from Alibaba Cloud STS AssumeRole with web identity creds provider.");
+            return;
+        }
+        auto credentials = obj->getObject("Credentials");
+        auto access_key_id = credentials->getValue<Aws::String>("AccessKeyId");
+        auto secret_access_key = credentials->getValue<Aws::String>("AccessKeySecret");
+        auto security_token = credentials->getValue<Aws::String>("SecurityToken");
+        auto expiration = credentials->getValue<Aws::String>("Expiration");
+        Aws::Utils::DateTime expiration_time(expiration, Aws::Utils::DateFormat::ISO_8601);
+
+        LOG_TRACE(log, "Successfully retrieved credentials with AWS_ACCESS_KEY: {}", access_key_id);
+        m_credentials = Aws::Auth::AWSCredentials(access_key_id, secret_access_key, security_token, expiration_time);
+    }
+    catch (const Poco::Exception & e)
+    {
+        LOG_ERROR(log, "Failed to parse response from Alibaba Cloud STS, {}", e.displayText());
         return;
     }
-    auto credentials = obj->getObject("Credentials");
-    auto access_key_id = credentials->getValue<Aws::String>("AccessKeyId");
-    auto secret_access_key = credentials->getValue<Aws::String>("AccessKeySecret");
-    auto security_token = credentials->getValue<Aws::String>("SecurityToken");
-    auto expiration = credentials->getValue<Aws::String>("Expiration");
-    Aws::Utils::DateTime expiration_time(expiration, Aws::Utils::DateFormat::ISO_8601);
-
-    LOG_TRACE(log, "Successfully retrieved credentials with AWS_ACCESS_KEY: {}", access_key_id);
-    m_credentials = Aws::Auth::AWSCredentials(access_key_id, secret_access_key, security_token, expiration_time);
 }
 
 
