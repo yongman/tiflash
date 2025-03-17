@@ -307,14 +307,13 @@ Aws::String AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::calculateQu
     params["OIDCToken"] = m_token;
 
     // build http query_string from params
-    Aws::StringStream ss;
-    for (const auto & [key, value] : params)
-    {
-        ss << key << "=" << value << "&";
-    }
-    Aws::String query_string = ss.str();
-    if (!query_string.empty())
-        query_string.pop_back();
+    FmtBuffer buff;
+    buff.joinStr(
+        params.begin(),
+        params.end(),
+        [](const auto & iter, FmtBuffer & fb) { fb.fmtAppend("{}={}", iter.first, iter.second); },
+        "&");
+    Aws::String query_string = buff.toString();
 
     return query_string;
 }
@@ -364,6 +363,7 @@ void AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::Reload()
     if (response->GetResponseCode() != Aws::Http::HttpResponseCode::OK)
     {
         LOG_ERROR(log, "Failed to send request to Alibaba Cloud STS AssumeRole with web identity creds provider.");
+        return;
     }
 
     // parse http response
