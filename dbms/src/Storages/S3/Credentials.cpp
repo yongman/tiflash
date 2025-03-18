@@ -305,6 +305,7 @@ Aws::String AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::calculateQu
     params["OIDCProviderArn"] = m_oidc_provider_arn;
     params["RoleArn"] = m_role_arn;
     params["OIDCToken"] = m_token;
+    params["Timestamp"] = Aws::Utils::DateTime::Now().ToGmtString(Aws::Utils::DateFormat::ISO_8601);
 
     // build http query_string from params
     FmtBuffer buff;
