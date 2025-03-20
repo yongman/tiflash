@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,10 @@
 
 #pragma once
 
-#include <common/types.h>
+#include <Common/Logger_fwd.h>
 
-#include <thread>
-
-UInt16 getNumberOfLogicalCPUCores();
-UInt16 getNumberOfPhysicalCPUCores();
-
-void setNumberOfLogicalCPUCores(UInt16 number_of_logical_cpu_cores_);
-
-void computeAndSetNumberOfPhysicalCPUCores(
-    UInt16 number_of_logical_cpu_cores,
-    UInt16 number_of_hardware_physical_cores);
+namespace DB
+{
+void setupAllocator(const LoggerPtr & log);
+void setupSIMD(const LoggerPtr & log);
+} // namespace DB

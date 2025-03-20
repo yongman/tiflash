@@ -560,6 +560,9 @@ try
                 default_cf.freeze();
                 validateSSTGeneration(kvs, proxy_instance, region_id, default_cf, ColumnFamilyType::Default, 1, 0);
             }
+#if SERVERLESS_PROXY == 0
+            // Serverless Proxy supports parallel prehandling, and doesn't support multi SST files.
+            // So disabled these tests.
             {
                 // Multiple files
                 MockSSTReader::getMockSSTData().clear();
@@ -595,7 +598,6 @@ try
                 default_cf.finish_file();
                 default_cf.freeze();
                 validateSSTGeneration(kvs, proxy_instance, region_id, default_cf, ColumnFamilyType::Default, 3, 6);
-
                 kvs.mutProxyHelperUnsafe()->sst_reader_interfaces = make_mock_sst_reader_interface();
                 proxy_instance->snapshot(kvs, ctx.getTMTContext(), region_id, {default_cf}, 0, 0, std::nullopt);
 
@@ -614,6 +616,7 @@ try
                     EXPECT_THROW(proxy_instance->doApply(kvs, ctx.getTMTContext(), cond, region_id, index), Exception);
                 }
             }
+#endif
             {
                 // Test of ingesting single file with MultiSSTReader.
                 MockSSTReader::getMockSSTData().clear();
@@ -1186,6 +1189,7 @@ try
         // Multiple files
         MockSSTReader::getMockSSTData().clear();
         MockSSTGenerator default_cf{902, 800, ColumnFamilyType::Default};
+#if SERVERLESS_PROXY == 0
         default_cf.insert(1, "v1");
         default_cf.finish_file();
         default_cf.insert(2, "v2");
@@ -1199,6 +1203,17 @@ try
         default_cf.insert(7, "v7");
         default_cf.finish_file();
         default_cf.freeze();
+#else
+        default_cf.insert(1, "v1");
+        default_cf.insert(2, "v2");
+        default_cf.insert(3, "v3");
+        default_cf.insert(4, "v4");
+        default_cf.insert(5, "v5");
+        default_cf.insert(6, "v6");
+        default_cf.insert(7, "v7");
+        default_cf.finish_file();
+        default_cf.freeze();
+#endif
         kvs.mutProxyHelperUnsafe()->sst_reader_interfaces = make_mock_sst_reader_interface();
 
         auto make_meta = [&]() {

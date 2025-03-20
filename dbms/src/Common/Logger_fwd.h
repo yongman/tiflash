@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,11 @@
 
 #pragma once
 
-#include <common/types.h>
+#include <memory>
 
-#include <thread>
+namespace DB
+{
+class Logger;
+using LoggerPtr = std::shared_ptr<Logger>;
 
-UInt16 getNumberOfLogicalCPUCores();
-UInt16 getNumberOfPhysicalCPUCores();
-
-void setNumberOfLogicalCPUCores(UInt16 number_of_logical_cpu_cores_);
-
-void computeAndSetNumberOfPhysicalCPUCores(
-    UInt16 number_of_logical_cpu_cores,
-    UInt16 number_of_hardware_physical_cores);
+} // namespace DB
