@@ -33,6 +33,7 @@
 #include <aws/core/platform/OSVersionInfo.h>
 #include <aws/core/utils/UUID.h>
 #include <aws/core/utils/json/JsonSerializer.h>
+#include <aws/core/utils/ratelimiter/DefaultRateLimiter.h>
 #include <common/logger_useful.h>
 
 #include <fstream>
@@ -255,6 +256,7 @@ private:
     Aws::String m_endpoint;
     bool m_initialized;
     std::shared_ptr<Aws::Http::HttpClient> m_http_client;
+    std::shared_ptr<Aws::Utils::RateLimits::RateLimiterInterface> m_limiter;
     LoggerPtr log;
 };
 
@@ -291,6 +293,9 @@ AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::AlibabaCloudSTSAssumeRo
     auto poco_cfg = PocoHTTPClientConfiguration(std::make_shared<RemoteHostFilter>(), 1, false, true);
     // use default retry strategy in poco http client
     m_http_client = std::make_shared<PocoHTTPClient>(Aws::Client::ClientConfiguration(), poco_cfg);
+    m_limiter = Aws::MakeShared<Aws::Utils::RateLimits::DefaultRateLimiter<>>(
+        "AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider",
+        200000);
     m_initialized = true;
     LOG_INFO(log, "Creating Alibaba Cloud STS AssumeRole with web identity creds provider.");
 }
@@ -360,7 +365,7 @@ void AlibabaCloudSTSAssumeRoleWebIdentityCredentialsProvider::Reload()
         Aws::Http::HttpMethod::HTTP_POST);
 
     // send http request
-    auto response = m_http_client->MakeRequest(request);
+    auto response = m_http_client->MakeRequest(request, m_limiter.get(), m_limiter.get());
     if (response->GetResponseCode() != Aws::Http::HttpResponseCode::OK)
     {
         LOG_ERROR(log, "Failed to send request to Alibaba Cloud STS AssumeRole with web identity creds provider.");
