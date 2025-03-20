@@ -22,13 +22,13 @@ use crate::MergedFileFromDirectory;
 
 static INDEX_IMMEDIATE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-struct TantivyIndexWriter {
+pub struct TantivyIndexWriter {
     index_writer: tantivy::SingleSegmentIndexWriter,
     field_body: Field,
 }
 
 impl TantivyIndexWriter {
-    fn new(dir: Box<dyn tantivy::Directory>) -> Result<Self> {
+    pub fn new(dir: Box<dyn tantivy::Directory>) -> Result<Self> {
         let mut schema_builder = Schema::builder();
         let field_body = schema_builder.add_text_field(
             "body",
@@ -54,20 +54,19 @@ impl TantivyIndexWriter {
         })
     }
 
-    fn add_document(&mut self, body: &str) -> Result<()> {
+    pub fn add_document(&mut self, body: &str) -> Result<()> {
         self.index_writer
             .add_document(tantivy::doc!( self.field_body => body ))?;
         Ok(())
     }
 
-    fn add_null(&mut self) -> Result<()> {
+    pub fn add_null(&mut self) -> Result<()> {
         self.index_writer.add_document(tantivy::doc!())?;
         Ok(())
     }
 
-    fn finalize(self) -> Result<()> {
-        self.index_writer.finalize()?;
-        Ok(())
+    pub fn finalize(self) -> Result<tantivy::Index> {
+        Ok(self.index_writer.finalize()?)
     }
 }
 

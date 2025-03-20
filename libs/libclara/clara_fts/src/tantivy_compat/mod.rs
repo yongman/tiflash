@@ -12,22 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Result;
-
-fn main() -> Result<()> {
-    prost_build::compile_protos(&["src/directory/merged/proto.proto"], &["src"])?;
-
-    let files = [
-        "src/index_reader.rs",
-        "src/index_writer.rs",
-        "src/brute_searcher.rs",
-    ];
-
-    // Generate bridge only
-    let _ = cxx_build::bridges(files);
-
-    for file in files.iter() {
-        println!("cargo:rerun-if-changed={}", file);
-    }
-    Ok(())
-}
+/// This mod provides compatibility with tantivy's some behaviors.
+/// Code is ported directly from tantivy.
+pub mod fieldnorm_code;

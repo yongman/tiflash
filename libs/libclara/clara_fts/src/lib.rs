@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![feature(test)]
+
+extern crate test;
+
 mod defaults;
+mod tantivy_compat;
 
 mod directory;
 pub use directory::*;
@@ -21,5 +26,5 @@ pub use index_writer::*;
 mod index_reader;
 pub use index_reader::*;
 
-mod on_demand_searcher;
-pub use on_demand_searcher::*;
+mod brute_searcher;
+pub use brute_searcher::*;

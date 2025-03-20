@@ -57,3 +57,5 @@ TestUnixTimestamp.TestTimezone
 TiKVKeyValueTest.ParseLockValue
 TiKVKeyValueTest.PortedTests
 WindowExecutorTestRunner.fineGrainedShuffle
+InvertedIndex.MultipleThreads1
+InvertedIndex.MultipleThreads2

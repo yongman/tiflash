@@ -21,7 +21,7 @@ set(_CLARA_GEN_SRC_FILES
         # From `libclara/clare_fts/build.rs`.
         "${_CLARA_GEN_DIR}/clara_fts/src/index_reader.rs.cc"
         "${_CLARA_GEN_DIR}/clara_fts/src/index_writer.rs.cc"
-        "${_CLARA_GEN_DIR}/clara_fts/src/on_demand_searcher.rs.cc"
+        "${_CLARA_GEN_DIR}/clara_fts/src/brute_searcher.rs.cc"
 )
 
 file(MAKE_DIRECTORY ${_CLARA_INCLUDE_DIR})

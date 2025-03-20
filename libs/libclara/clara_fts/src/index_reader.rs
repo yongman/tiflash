@@ -16,6 +16,9 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+pub use ffi::BitmapFilter;
+pub use ffi::ScoredResult;
+
 /// IndexReader reads index file for full text searching.
 pub struct IndexReader {
     index_reader: tantivy::IndexReader,
@@ -28,7 +31,10 @@ impl IndexReader {
     fn new(directory: impl tantivy::Directory) -> Result<Self> {
         let mut index = tantivy::Index::open(directory)?;
         index.set_tokenizers(crate::defaults::DEFAULT_TOKENIZERS.clone());
+        Self::from_tantivy_index(index)
+    }
 
+    pub fn from_tantivy_index(index: tantivy::Index) -> Result<Self> {
         let index_reader = index.reader()?;
         let schema = index.schema();
         let field_body = schema.get_field("body")?;
@@ -36,7 +42,6 @@ impl IndexReader {
         Ok(Self {
             index_reader,
             query_parser,
-
             field_body,
         })
     }
@@ -56,27 +61,47 @@ impl IndexReader {
     }
 
     /// Returns the stored content for a doc id.
-    pub fn get(&self, doc_id: u32) -> Result<String> {
+    pub fn get(&self, doc_id: u32, result: &mut String) -> Result<()> {
         // TODO: Performance is not measured, possibly need to improve.
+        result.clear();
         let searcher = self.index_reader.searcher();
-        let doc = searcher.doc::<tantivy::TantivyDocument>(DocAddress::new(0, doc_id))?;
+        let doc = searcher.doc::<tantivy::TantivyDocument>(tantivy::DocAddress::new(0, doc_id))?;
         let value = doc
             .get_first(self.field_body)
             .ok_or_else(|| anyhow::anyhow!("No value for doc_id={}", doc_id))?;
         match value {
-            tantivy::schema::OwnedValue::Str(s) => Ok(s.to_owned()),
+            tantivy::schema::OwnedValue::Str(s) => {
+                result.push_str(s);
+                Ok(())
+            }
             _ => bail!("Unexpected field type for doc_id={}", doc_id),
         }
     }
 
+    /// Only used in tests as a handy get().
+    #[cfg(test)]
+    fn get_for_test(&self, doc_id: u32) -> Result<String> {
+        let mut result = String::new();
+        self.get(doc_id, &mut result)?;
+        Ok(result)
+    }
+
     /// Searches the index for documents matching the query without scoring.
+    /// If the document is not matching at all, it will not be returned.
+    /// The returned documents do not have a pre-defined order.
+    ///
     /// Parameters use simple primitive types for FFI compatibility.
     ///
     /// # Arguments
     ///
     /// * `filter_bitmap` - Filter each result.
-    pub fn search_no_score(&self, query: &str, filter: &BitmapFilter) -> Result<Vec<u32>> {
-        // TODO: Accept a pre-allocated result buffer for better performance.
+    pub fn search_no_score(
+        &self,
+        query: &str,
+        filter: &BitmapFilter,
+        results: &mut Vec<u32>,
+    ) -> Result<()> {
+        results.clear();
 
         let searcher = self.index_reader.searcher();
         let segment_readers = searcher.segment_readers();
@@ -104,7 +129,7 @@ impl IndexReader {
         //     weight.for_each_no_score(&segment_readers[0], &mut |docs| { results.extend(docs); })?;
         // TODO: Support max docs (=10000 by default) like ElasticSearch
         let mut docset = weight.scorer(&segment_readers[0], 1.0)?;
-        let mut results = Vec::<u32>::with_capacity(docset.size_hint() as usize);
+        results.reserve(docset.size_hint() as usize);
 
         if filter.match_all {
             // Fast path, no filtering is applied
@@ -130,7 +155,83 @@ impl IndexReader {
             }
         }
 
-        Ok(results)
+        Ok(())
+    }
+
+    /// Searches the index for documents matching the query and returns a score.
+    /// If the document is not matching at all, it will not be returned.
+    /// The returned documents do not have a pre-defined order.
+    ///
+    /// Parameters use simple primitive types for FFI compatibility.
+    ///
+    /// TODO: This function should be improved to not return scores, but return
+    /// score primitives so that the caller could join multiple scores.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter_bitmap` - Filter each result.
+    pub fn search_scored(
+        &self,
+        query: &str,
+        filter: &BitmapFilter,
+        results: &mut Vec<ScoredResult>,
+    ) -> Result<()> {
+        results.clear();
+
+        let searcher = self.index_reader.searcher();
+        let segment_readers = searcher.segment_readers();
+        if segment_readers.len() != 1 {
+            bail!("Expected 1 segment, got {}", segment_readers.len());
+        }
+
+        if !filter.match_all {
+            let docs_in_segment = segment_readers[0].max_doc();
+            if (docs_in_segment as usize) != filter.match_partial.len() {
+                bail!(
+                    "Invalid bitmap filter, expected length {}, got {}",
+                    docs_in_segment,
+                    filter.match_partial.len()
+                );
+            }
+        }
+
+        let query = self.query_parser.parse_query(query)?;
+        let weight = query.weight(tantivy::query::EnableScoring::enabled_from_searcher(
+            &searcher,
+        ))?;
+
+        let mut docset = weight.scorer(&segment_readers[0], 1.0)?;
+        results.reserve(docset.size_hint() as usize);
+
+        if filter.match_all {
+            loop {
+                let docid = docset.doc();
+                if docid == tantivy::TERMINATED {
+                    break;
+                }
+                results.push(ScoredResult {
+                    doc_id: docid,
+                    score: docset.score(),
+                });
+                docset.advance();
+            }
+        } else {
+            loop {
+                let docid = docset.doc();
+                if docid == tantivy::TERMINATED {
+                    break;
+                }
+                if filter.match_partial[docid as usize] > 0 {
+                    results.push(ScoredResult {
+                        doc_id: docid,
+                        score: docset.score(),
+                    });
+                }
+                docset.advance();
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -152,9 +253,6 @@ fn new_memory_index_reader_2(index_buffer: &[u8]) -> Result<Box<IndexReader>> {
     Ok(Box::new(instance))
 }
 
-pub use ffi::BitmapFilter;
-use tantivy::DocAddress;
-
 impl BitmapFilter<'_> {
     pub fn all_match() -> Self {
         Self {
@@ -173,9 +271,16 @@ impl BitmapFilter<'_> {
 
 #[cxx::bridge(namespace = "ClaraFTS")]
 mod ffi {
+    #[derive(Debug)]
     struct BitmapFilter<'a> {
         match_all: bool,
         match_partial: &'a [u8],
+    }
+
+    #[derive(Debug)]
+    struct ScoredResult {
+        doc_id: u32,
+        score: f32,
     }
 
     extern "Rust" {
@@ -187,19 +292,28 @@ mod ffi {
 
         fn new_memory_index_reader_2(index_buffer: &[u8]) -> Result<Box<IndexReader>>;
 
-        fn get(self: &IndexReader, doc_id: u32) -> Result<String>;
+        fn get(self: &IndexReader, doc_id: u32, result: &mut String) -> Result<()>;
 
         fn search_no_score(
             self: &IndexReader,
             query: &str,
             filter: &BitmapFilter,
-        ) -> Result<Vec<u32>>;
+            results: &mut Vec<u32>,
+        ) -> Result<()>;
+
+        fn search_scored(
+            self: &IndexReader,
+            query: &str,
+            filter: &BitmapFilter,
+            results: &mut Vec<ScoredResult>,
+        ) -> Result<()>;
     }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use ordered_float::OrderedFloat;
     use paste::paste;
 
     use super::*;
@@ -252,29 +366,33 @@ mod tests {
         // Just test some basic behaviors to ensure that we can read and search the index.
         // There are standalone search tests covering case sensitivity, normalization, tokenization, etc.
         let reader = finalize(w)?;
-        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        let mut results = Vec::new();
+        reader.search_no_score("popular", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0]);
-        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        reader.search_no_score("people", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![1]);
-        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        reader.search_no_score("can", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0, 3]);
-        let results = reader.search_no_score("furina", &BitmapFilter::all_match())?;
+        reader.search_no_score("furina", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
 
         assert_eq!(
-            reader.get(0)?,
+            reader.get_for_test(0)?,
             "Being too popular can be such a hassle".to_owned()
         );
         assert_eq!(
-            reader.get(1)?,
+            reader.get_for_test(1)?,
             "Who knew the people would adore me so much?".to_owned()
         );
-        assert_eq!(reader.get(2)?, "The world is but a stage.".to_owned());
         assert_eq!(
-            reader.get(3)?,
+            reader.get_for_test(2)?,
+            "The world is but a stage.".to_owned()
+        );
+        assert_eq!(
+            reader.get_for_test(3)?,
             "Why cry, when you can laugh instead?".to_owned()
         );
-        assert!(reader.get(4).is_err());
+        assert!(reader.get_for_test(4).is_err());
     });
 
     write_read_test!(test_null, get_writer, finalize, {
@@ -290,29 +408,33 @@ mod tests {
         // Just test some basic behaviors to ensure that we can read and search the index.
         // There are standalone search tests covering case sensitivity, normalization, tokenization, etc.
         let reader = finalize(w)?;
-        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        let mut results = Vec::new();
+        reader.search_no_score("popular", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0]);
-        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        reader.search_no_score("people", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![2]);
-        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        reader.search_no_score("can", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0, 6]);
-        let results = reader.search_no_score("furina", &BitmapFilter::all_match())?;
+        reader.search_no_score("furina", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
 
         assert_eq!(
-            reader.get(0)?,
+            reader.get_for_test(0)?,
             "Being too popular can be such a hassle".to_owned()
         );
-        assert!(reader.get(1).is_err());
+        assert!(reader.get_for_test(1).is_err());
         assert_eq!(
-            reader.get(2)?,
+            reader.get_for_test(2)?,
             "Who knew the people would adore me so much?".to_owned()
         );
-        assert_eq!(reader.get(3)?, "The world is but a stage.".to_owned());
-        assert!(reader.get(4).is_err());
-        assert!(reader.get(5).is_err());
         assert_eq!(
-            reader.get(6)?,
+            reader.get_for_test(3)?,
+            "The world is but a stage.".to_owned()
+        );
+        assert!(reader.get_for_test(4).is_err());
+        assert!(reader.get_for_test(5).is_err());
+        assert_eq!(
+            reader.get_for_test(6)?,
             "Why cry, when you can laugh instead?".to_owned()
         );
     });
@@ -320,7 +442,8 @@ mod tests {
     write_read_test!(test_indexer_empty, get_writer, finalize, {
         let w = get_writer()?;
         let reader = finalize(w)?;
-        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        let mut results = Vec::new();
+        reader.search_no_score("popular", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
     });
 
@@ -336,13 +459,14 @@ mod tests {
 
         // Empty query should not match any document.
         let reader = finalize(w)?;
-        let results = reader.search_no_score("", &BitmapFilter::all_match())?;
+        let mut results = Vec::new();
+        reader.search_no_score("", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
 
-        let results = reader.search_no_score("  ", &BitmapFilter::all_match())?;
+        reader.search_no_score("  ", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
 
-        let results = reader.search_no_score("foobar", &BitmapFilter::all_match())?;
+        reader.search_no_score("foobar", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
     });
 
@@ -354,8 +478,13 @@ mod tests {
         w.add_document("Why cry, when you can laugh instead?")?;
 
         let reader = finalize(w)?;
+        let mut results = Vec::new();
 
-        let results = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 1, 0, 1]))?;
+        reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[0, 1, 0, 1]),
+            &mut results,
+        )?;
         assert_eq!(results, vec![3]);
     });
 
@@ -372,27 +501,32 @@ mod tests {
 
         let reader = finalize(w)?;
 
-        let results = reader.search_no_score(
+        let mut results = Vec::new();
+        reader.search_no_score(
             "can",
             &BitmapFilter::partial_match(&[1, 1, 0, 0, 0, 0, 0, 0]),
+            &mut results,
         )?;
         assert!(results.is_empty());
 
-        let results = reader.search_no_score(
+        reader.search_no_score(
             "can",
             &BitmapFilter::partial_match(&[1, 1, 1, 0, 0, 0, 0, 0]),
+            &mut results,
         )?;
         assert_eq!(results, vec![2]);
 
-        let results = reader.search_no_score(
+        reader.search_no_score(
             "can",
             &BitmapFilter::partial_match(&[1, 1, 1, 0, 1, 1, 1, 0]),
+            &mut results,
         )?;
         assert_eq!(results, vec![2]);
 
-        let results = reader.search_no_score(
+        reader.search_no_score(
             "can",
             &BitmapFilter::partial_match(&[1, 1, 1, 0, 0, 0, 0, 1]),
+            &mut results,
         )?;
         assert_eq!(results, vec![2, 7]);
     });
@@ -405,8 +539,13 @@ mod tests {
         w.add_document("Why cry, when you can laugh instead?")?;
 
         let reader = finalize(w)?;
+        let mut results = Vec::new();
 
-        let results = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0, 0, 0]))?;
+        reader.search_no_score(
+            "can",
+            &BitmapFilter::partial_match(&[0, 0, 0, 0]),
+            &mut results,
+        )?;
         assert!(results.is_empty());
     });
 
@@ -418,8 +557,9 @@ mod tests {
         w.add_document("Why cry, when you can laugh instead?")?;
 
         let reader = finalize(w)?;
+        let mut results = Vec::new();
 
-        let results = reader.search_no_score("can", &BitmapFilter::all_match())?;
+        reader.search_no_score("can", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0, 3]);
     });
 
@@ -428,14 +568,15 @@ mod tests {
         w.add_document("Being too popular can be such a hassle")?;
 
         let reader = finalize(w)?;
+        let mut results = Vec::new();
 
-        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]));
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]), &mut results);
         assert!(r.is_err());
 
-        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]));
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]), &mut results);
         assert!(r.is_ok());
 
-        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]));
+        let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]), &mut results);
         assert!(r.is_err());
     });
 
@@ -451,17 +592,23 @@ mod tests {
             // There are 2 documents including the null, so the filter length should be 2.
 
             let reader = finalize(w)?;
+            let mut results = Vec::new();
 
-            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]));
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[]), &mut results);
             assert!(r.is_err());
 
-            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]));
+            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0]), &mut results);
             assert!(r.is_err());
 
-            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]));
+            let r =
+                reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0]), &mut results);
             assert!(r.is_ok());
 
-            let r = reader.search_no_score("can", &BitmapFilter::partial_match(&[0, 0, 0]));
+            let r = reader.search_no_score(
+                "can",
+                &BitmapFilter::partial_match(&[0, 0, 0]),
+                &mut results,
+            );
             assert!(r.is_err());
         }
     );
@@ -473,6 +620,69 @@ mod tests {
         drop(w);
 
         _ = finalize;
+    });
+
+    const TOPK_SAMPLES: &[&str] = &[
+        /* 0 */ "machine learning machine learning machine learning",
+        /* 1 */ "machine learning algorithms. Machine learning models. Machine learning optimization.",
+        /* 2 */ "Machine learning (Machine learning (Machine learning (Machine learning (Machine learning (is used in AI. Machine learning (Machine learning (Machine learning (Machine learning (Machine learning (is used in AI. Machine learning (Machine learning (Machine learning (Machine learning (Machine learning (is used in AI. Machine learning ends.",
+        /* 3 */ "Understanding machine learning: basics of learning from machines. Machine learning requires data.",
+        /* 4 */ "machine learning",
+        /* 5 */ "This 50-word document briefly mentions machine learning once. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. Generic text about AI. ",
+        /* 6 */ "Learning machine learning machine. Learning machine applications.",
+        /* 7 */ "Space Tourism: Risks and Opportunities - Private companies like SpaceX and Blue Origin are making suborbital flights accessible, but safety protocols remain a critical concern.",
+        /* 8 */ "Sustainable Fashion Trends - Eco-friendly materials like mushroom leather and recycled polyester are reshaping the fashion industry’s environmental impact.",
+        /* 9 */ "AI-powered tools are transforming medical imaging analysis. Deep learning algorithms now detect early-stage tumors with 95% accuracy."
+    ];
+
+    write_read_test!(test_topk, get_writer, finalize, {
+        let mut w = get_writer()?;
+        for sample in TOPK_SAMPLES {
+            w.add_document(sample)?;
+        }
+        let reader = finalize(w)?;
+        let mut r = Vec::new();
+
+        reader.search_scored("machine learning", &BitmapFilter::all_match(), &mut r)?;
+        r.sort_by_key(|result| OrderedFloat(-result.score));
+        let rows = r.iter().map(|result| result.doc_id).collect::<Vec<_>>();
+        assert_eq!(rows, vec![2, 0, 6, 1, 3, 4, 5, 9]);
+    });
+
+    write_read_test!(test_topk_with_filter, get_writer, finalize, {
+        let mut w = get_writer()?;
+        for sample in TOPK_SAMPLES {
+            w.add_document(sample)?;
+        }
+        let reader = finalize(w)?;
+        let mut r = Vec::new();
+
+        reader.search_scored(
+            "machine learning",
+            &BitmapFilter::partial_match(&[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+            &mut r,
+        )?;
+        r.sort_by_key(|result| OrderedFloat(-result.score));
+        let rows = r.iter().map(|result| result.doc_id).collect::<Vec<_>>();
+        assert_eq!(rows, vec![2, 0, 6, 1, 3, 4, 5, 9]);
+
+        reader.search_scored(
+            "machine learning",
+            &BitmapFilter::partial_match(&[0, 0, 0, 1, 1, 1, 1, 1, 1, 1]),
+            &mut r,
+        )?;
+        r.sort_by_key(|result| OrderedFloat(-result.score));
+        let rows = r.iter().map(|result| result.doc_id).collect::<Vec<_>>();
+        assert_eq!(rows, vec![6, 3, 4, 5, 9]);
+
+        reader.search_scored(
+            "machine learning",
+            &BitmapFilter::partial_match(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            &mut r,
+        )?;
+        r.sort_by_key(|result| OrderedFloat(-result.score));
+        let rows = r.iter().map(|result| result.doc_id).collect::<Vec<_>>();
+        assert!(rows.is_empty());
     });
 
     #[test]
@@ -506,9 +716,10 @@ mod tests {
         assert_eq!(1, dir_guard.path().read_dir()?.count());
 
         let reader = IndexReader::new_mmap(dir_guard.path().join("test.index").to_str().unwrap())?;
-        let results = reader.search_no_score("popular", &BitmapFilter::all_match())?;
+        let mut results = Vec::new();
+        reader.search_no_score("popular", &BitmapFilter::all_match(), &mut results)?;
         assert!(results.is_empty());
-        let results = reader.search_no_score("people", &BitmapFilter::all_match())?;
+        reader.search_no_score("people", &BitmapFilter::all_match(), &mut results)?;
         assert_eq!(results, vec![0]);
 
         Ok(())
