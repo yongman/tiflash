@@ -16,7 +16,6 @@
 
 extern crate test;
 
-mod defaults;
 mod tantivy_compat;
 
 mod directory;
@@ -25,6 +24,8 @@ mod index_writer;
 pub use index_writer::*;
 mod index_reader;
 pub use index_reader::*;
+mod tokenizer;
+pub use tokenizer::*;
 
 mod brute_searcher;
 pub use brute_searcher::*;

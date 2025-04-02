@@ -56,15 +56,12 @@ pub struct BruteScoredSearcher {
 }
 
 impl BruteScoredSearcher {
-    pub fn new(query: &str) -> Result<Self> {
+    pub fn new(tokenizer_name: &str, query: &str) -> Result<Self> {
         use std::collections::hash_map::Entry;
 
-        let tokenizers = crate::defaults::DEFAULT_TOKENIZERS.clone();
-        let tokenizer_name = *crate::defaults::DEFAULT_TOKENIZER;
+        let tokenizers = crate::tokenizer::TOKENIZERS.clone();
         let tokenizer = tokenizers.get(tokenizer_name);
         if tokenizer.is_none() {
-            // We use a result here, because in future tokenizer could be
-            // specified by the user.
             bail!("Tokenizer {:?} not found", tokenizer_name);
         }
 
@@ -235,8 +232,11 @@ impl BruteScoredSearcher {
 }
 
 /// For FFI
-fn new_brute_scored_searcher(query: &str) -> Result<Box<BruteScoredSearcher>> {
-    let searcher = BruteScoredSearcher::new(query)?;
+fn new_brute_scored_searcher(
+    tokenizer_name: &str,
+    query: &str,
+) -> Result<Box<BruteScoredSearcher>> {
+    let searcher = BruteScoredSearcher::new(tokenizer_name, query)?;
     Ok(Box::new(searcher))
 }
 
@@ -253,7 +253,10 @@ mod ffi {
     extern "Rust" {
         type BruteScoredSearcher;
 
-        fn new_brute_scored_searcher(query: &str) -> Result<Box<BruteScoredSearcher>>;
+        fn new_brute_scored_searcher(
+            tokenizer_name: &str,
+            query: &str,
+        ) -> Result<Box<BruteScoredSearcher>>;
 
         fn add_document(self: &mut BruteScoredSearcher, body: &str);
 
@@ -279,7 +282,7 @@ mod tests {
     use super::*;
 
     fn is_index_match(src: &str, query: &str) -> Result<bool> {
-        let mut index_writer = crate::IndexWriterInMemory::new()?;
+        let mut index_writer = crate::IndexWriterInMemory::new("STANDARD_V1")?;
         index_writer.add_document(src)?;
         let buffer = index_writer.finalize()?;
         let index_reader = crate::IndexReader::new_memory(buffer)?;
@@ -290,7 +293,7 @@ mod tests {
 
     fn assert_match_eq(src: &str, query: &str) -> Result<()> {
         let index_match_result = is_index_match(src, query)?;
-        let mut searcher = BruteScoredSearcher::new(query)?;
+        let mut searcher = BruteScoredSearcher::new("STANDARD_V1", query)?;
         searcher.add_document(src);
         let mut results = Vec::new();
         searcher.search(&crate::BitmapFilter::all_match(), &mut results)?;
@@ -347,7 +350,7 @@ mod tests {
     ];
 
     fn assert_scores_eq(query: &str) -> Result<()> {
-        let mut index_writer = crate::IndexWriterInMemory::new()?;
+        let mut index_writer = crate::IndexWriterInMemory::new("STANDARD_V1")?;
         for doc in SCORE_SAMPLE_DOCS {
             index_writer.add_document(doc)?;
         }
@@ -356,7 +359,7 @@ mod tests {
         let mut results_index = Vec::new();
         index_reader.search_scored(query, &crate::BitmapFilter::all_match(), &mut results_index)?;
 
-        let mut searcher = BruteScoredSearcher::new(query)?;
+        let mut searcher = BruteScoredSearcher::new("STANDARD_V1", query)?;
         for doc in SCORE_SAMPLE_DOCS {
             searcher.add_document(doc);
         }
@@ -451,7 +454,7 @@ mod benches {
 
         let mut results = Vec::new();
         b.iter(|| {
-            let mut s = BruteScoredSearcher::new("sewing machine").unwrap();
+            let mut s = BruteScoredSearcher::new("STANDARD_V1", "sewing machine").unwrap();
             for d in &data {
                 s.add_document(d);
             }
@@ -469,6 +472,7 @@ mod benches {
         let data = prepare_bench_data();
 
         let mut idx_writer = crate::index_writer::TantivyIndexWriter::new(
+            "STANDARD_V1",
             tantivy::directory::RamDirectory::create().box_clone(),
         )
         .unwrap();
@@ -501,6 +505,7 @@ mod benches {
         let mut results = Vec::new();
         b.iter(|| {
             let mut idx_writer = crate::index_writer::TantivyIndexWriter::new(
+                "STANDARD_V1",
                 tantivy::directory::RamDirectory::create().box_clone(),
             )
             .unwrap();

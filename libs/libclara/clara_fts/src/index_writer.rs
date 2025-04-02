@@ -28,14 +28,14 @@ pub struct TantivyIndexWriter {
 }
 
 impl TantivyIndexWriter {
-    pub fn new(dir: Box<dyn tantivy::Directory>) -> Result<Self> {
+    pub fn new(tokenizer_name: &str, dir: Box<dyn tantivy::Directory>) -> Result<Self> {
         let mut schema_builder = Schema::builder();
         let field_body = schema_builder.add_text_field(
             "body",
             tantivy::schema::TextOptions::default()
                 .set_indexing_options(
                     tantivy::schema::TextFieldIndexing::default()
-                        .set_tokenizer(*crate::defaults::DEFAULT_TOKENIZER)
+                        .set_tokenizer(tokenizer_name)
                         .set_fieldnorms(true)
                         .set_index_option(
                             tantivy::schema::IndexRecordOption::WithFreqsAndPositions,
@@ -45,7 +45,7 @@ impl TantivyIndexWriter {
         );
         let schema = schema_builder.build();
         let index_writer = tantivy::IndexBuilder::new()
-            .tokenizers(crate::defaults::DEFAULT_TOKENIZERS.clone())
+            .tokenizers(crate::tokenizer::TOKENIZERS.clone())
             .schema(schema)
             .single_segment_index_writer(dir, 32_000_000_000)?;
         Ok(Self {
@@ -81,7 +81,7 @@ impl IndexWriterOnDisk {
     /// Creates a new `IndexWriterOnDisk` for on-disk index.
     /// If the index file already exists, it will be overwritten.
     /// Immediate index files will be all stored on disk before merging into a single file.
-    pub fn new(index_path: &str) -> Result<Self> {
+    pub fn new(tokenizer_name: &str, index_path: &str) -> Result<Self> {
         let immediate_path = PathBuf::from(format!(
             "{}-immediate-{}-{}-{}",
             index_path,
@@ -107,7 +107,7 @@ impl IndexWriterOnDisk {
             index_path: PathBuf::from(index_path),
             index_immediate_path: immediate_path,
             merging_directory: Some(merging_dir),
-            internal_writer: Some(TantivyIndexWriter::new(dir)?),
+            internal_writer: Some(TantivyIndexWriter::new(tokenizer_name, dir)?),
         })
     }
 
@@ -172,12 +172,12 @@ pub struct IndexWriterInMemory {
 
 impl IndexWriterInMemory {
     /// Creates a new `IndexWriterInMemory` for in-memory index. The index will be stored in memory and will not be persisted to disk.
-    pub fn new() -> Result<Self> {
+    pub fn new(tokenizer_name: &str) -> Result<Self> {
         let merging_dir = crate::MergedFileFromRamDirectory::new();
         let dir = merging_dir.directory().box_clone();
         Ok(Self {
             merging_directory: Some(merging_dir),
-            internal_writer: Some(TantivyIndexWriter::new(dir)?),
+            internal_writer: Some(TantivyIndexWriter::new(tokenizer_name, dir)?),
         })
     }
 
@@ -229,25 +229,29 @@ impl Drop for IndexWriterInMemory {
 }
 
 /// For FFI
-fn new_disk_index_writer(index_path: &str) -> Result<Box<IndexWriterOnDisk>> {
-    let instance = IndexWriterOnDisk::new(index_path)?;
+fn new_disk_index_writer(tokenizer_name: &str, index_path: &str) -> Result<Box<IndexWriterOnDisk>> {
+    let instance = IndexWriterOnDisk::new(tokenizer_name, index_path)?;
     Ok(Box::new(instance))
 }
 
 /// For FFI
-fn new_memory_index_writer() -> Result<Box<IndexWriterInMemory>> {
-    let instance = IndexWriterInMemory::new()?;
+fn new_memory_index_writer(tokenizer_name: &str) -> Result<Box<IndexWriterInMemory>> {
+    let instance = IndexWriterInMemory::new(tokenizer_name)?;
     Ok(Box::new(instance))
 }
 
 #[cxx::bridge(namespace = "ClaraFTS")]
 mod ffi {
+
     extern "Rust" {
         type IndexWriterOnDisk;
 
         type IndexWriterInMemory;
 
-        fn new_disk_index_writer(index_path: &str) -> Result<Box<IndexWriterOnDisk>>;
+        fn new_disk_index_writer(
+            tokenizer_name: &str,
+            index_path: &str,
+        ) -> Result<Box<IndexWriterOnDisk>>;
 
         fn add_document(self: &mut IndexWriterOnDisk, body: &str) -> Result<()>;
 
@@ -255,7 +259,7 @@ mod ffi {
 
         fn finalize(self: &mut IndexWriterOnDisk) -> Result<()>;
 
-        fn new_memory_index_writer() -> Result<Box<IndexWriterInMemory>>;
+        fn new_memory_index_writer(tokenizer_name: &str) -> Result<Box<IndexWriterInMemory>>;
 
         fn add_document(self: &mut IndexWriterInMemory, body: &str) -> Result<()>;
 
@@ -265,4 +269,4 @@ mod ffi {
     }
 }
 
-// // Unit tests are placed in index_reader.rs
+// Unit tests are placed in index_reader.rs

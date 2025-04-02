@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 pub use ffi::BitmapFilter;
 pub use ffi::ScoredResult;
@@ -22,7 +22,7 @@ pub use ffi::ScoredResult;
 /// IndexReader reads index file for full text searching.
 pub struct IndexReader {
     index_reader: tantivy::IndexReader,
-    query_parser: tantivy::query::QueryParser,
+    query_tokenizer: tantivy::tokenizer::TextAnalyzer,
 
     field_body: tantivy::schema::Field,
 }
@@ -30,7 +30,7 @@ pub struct IndexReader {
 impl IndexReader {
     fn new(directory: impl tantivy::Directory) -> Result<Self> {
         let mut index = tantivy::Index::open(directory)?;
-        index.set_tokenizers(crate::defaults::DEFAULT_TOKENIZERS.clone());
+        index.set_tokenizers(crate::tokenizer::TOKENIZERS.clone());
         Self::from_tantivy_index(index)
     }
 
@@ -38,10 +38,27 @@ impl IndexReader {
         let index_reader = index.reader()?;
         let schema = index.schema();
         let field_body = schema.get_field("body")?;
-        let query_parser = tantivy::query::QueryParser::for_index(&index, vec![field_body]);
+
+        let tokenizer = {
+            let name = {
+                let field_body_type = schema.get_field_entry(field_body).field_type();
+                if let tantivy::schema::FieldType::Str(body_option) = field_body_type {
+                    let options = body_option
+                        .get_indexing_options()
+                        .ok_or_else(|| anyhow!("Unexpected field body not indexed"))?;
+                    options.tokenizer()
+                } else {
+                    bail!("Unexpected field type for body");
+                }
+            };
+            crate::tokenizer::TOKENIZERS
+                .get(name)
+                .ok_or_else(|| anyhow!("Tokenizer not found: {}", name))?
+        };
+
         Ok(Self {
             index_reader,
-            query_parser,
+            query_tokenizer: tokenizer,
             field_body,
         })
     }
@@ -86,6 +103,26 @@ impl IndexReader {
         Ok(result)
     }
 
+    /// Build a "Should" boolean query for the given query string.
+    /// Unlike query parser, for texts like "我失败了" (after segmentation 我/失败/了), it's semantic is "我" OR "失败" OR "了",
+    /// while in the Tantivy's query parser it will be "我" AND "失败" AND "了", which is not what we want.
+    ///
+    /// // TODO: Extract into a standalone function so that the query can be reused for different segments.
+    fn build_query(&self, query: &str) -> Result<Box<dyn tantivy::query::Query + 'static>> {
+        use tantivy::query::*;
+        let mut tokenizer = self.query_tokenizer.clone();
+        let mut token_stream = tokenizer.token_stream(query);
+        let mut subqueries = vec![];
+        token_stream.process(&mut |token| {
+            let term = tantivy::Term::from_field_text(self.field_body, &token.text);
+            let term_query = TermQuery::new(term, tantivy::schema::IndexRecordOption::WithFreqs);
+            let boxed: Box<dyn Query + 'static> = Box::new(term_query);
+            subqueries.push((Occur::Should, boxed));
+        });
+        let query = BooleanQuery::new(subqueries);
+        Ok(Box::new(query))
+    }
+
     /// Searches the index for documents matching the query without scoring.
     /// If the document is not matching at all, it will not be returned.
     /// The returned documents do not have a pre-defined order.
@@ -120,7 +157,7 @@ impl IndexReader {
             }
         }
 
-        let query = self.query_parser.parse_query(query)?;
+        let query = self.build_query(query)?;
         let weight = query.weight(tantivy::query::EnableScoring::disabled_from_searcher(
             &searcher,
         ))?;
@@ -195,7 +232,7 @@ impl IndexReader {
             }
         }
 
-        let query = self.query_parser.parse_query(query)?;
+        let query = self.build_query(query)?;
         let weight = query.weight(tantivy::query::EnableScoring::enabled_from_searcher(
             &searcher,
         ))?;
@@ -328,6 +365,7 @@ mod tests {
                     let dir_guard = tempfile::tempdir()?;
                     let $get_writer = || {
                         IndexWriterOnDisk::new(
+                            "STANDARD_V1",
                             dir_guard.path().join("test.index").to_str().unwrap(),
                         )
                     };
@@ -344,7 +382,7 @@ mod tests {
                 #[test]
                 fn [< $test_name _in_memory >]() -> Result<()> {
                     // In-memory test
-                    let $get_writer = || IndexWriterInMemory::new();
+                    let $get_writer = || IndexWriterInMemory::new("STANDARD_V1");
                     let $finalize = |mut w: IndexWriterInMemory| {
                         let buffer = w.finalize()?;
                         IndexReader::new_memory(buffer)
@@ -688,7 +726,10 @@ mod tests {
     #[test]
     fn test_on_disk_abandon_cleanup() -> Result<()> {
         let dir_guard = tempfile::tempdir()?;
-        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        let mut w = IndexWriterOnDisk::new(
+            "STANDARD_V1",
+            dir_guard.path().join("test.index").to_str().unwrap(),
+        )?;
         w.add_document("Being too popular can be such a hassle")?;
         assert!(dir_guard.path().read_dir()?.count() > 0);
 
@@ -702,7 +743,10 @@ mod tests {
     #[test]
     fn test_on_disk_overwrite() -> Result<()> {
         let dir_guard = tempfile::tempdir()?;
-        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        let mut w = IndexWriterOnDisk::new(
+            "STANDARD_V1",
+            dir_guard.path().join("test.index").to_str().unwrap(),
+        )?;
         w.add_document("Being too popular can be such a hassle")?;
         w.finalize()?;
 
@@ -710,7 +754,10 @@ mod tests {
         assert_eq!(1, dir_guard.path().read_dir()?.count());
 
         // Overwrite the index in serial is allowed. The later one takes effect.
-        let mut w = IndexWriterOnDisk::new(dir_guard.path().join("test.index").to_str().unwrap())?;
+        let mut w = IndexWriterOnDisk::new(
+            "STANDARD_V1",
+            dir_guard.path().join("test.index").to_str().unwrap(),
+        )?;
         w.add_document("Who knew the people would adore me so much?")?;
         w.finalize()?;
         assert_eq!(1, dir_guard.path().read_dir()?.count());
@@ -732,6 +779,41 @@ mod tests {
         // Open a non-index file should fail.
         let reader = IndexReader::new_mmap(dir_guard.path().join("test.index2").to_str().unwrap());
         assert!(reader.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_tokenizer() -> Result<()> {
+        let mut w = IndexWriterInMemory::new("MULTILINGUAL_V1")?;
+        w.add_document(/* 0 */ "· 中办国办印发《逐步把永久基本农田建成高标准农田实施方案》")?;
+        w.add_document(/* 1 */ "· 现象级创新，中国后劲如何？（读者点题·共同关注）")?;
+        w.add_document(/* 2 */ "· 陕西新能源汽车产业争创新优势")?;
+        w.add_document(/* 3 */ "· 让城市排水治理更智能（“两重”建设扎实推进）")?;
+        w.add_document(/* 4 */ "· 图片报道")?;
+        w.add_document(/* 5 */ "· 去年我国港口吞吐量稳居世界第一")?;
+        w.add_document(/* 6 */ "· 今年前两月社会物流总额同比增5.3%")?;
+        w.add_document(/* 7 */ "· 共同探索互利共赢的全球科技合作新模式")?;
+        w.add_document(/* 8 */ "· 双向奔赴，让投资更好惠及两国人民（钟声）")?;
+        w.add_document(/* 9 */ "· 中国—东盟合作树立“全球南方”联合自强重要范本（国际论坛）")?;
+        w.add_document(/* 10 */ "· “携手打造一个更加繁荣的亚洲命运共同体”（高端访谈）")?;
+        w.add_document(/* 11 */ "· 中方救援队成功救出幸存者")?;
+        w.add_document(/* 12 */ "· 加强文明对话 促进理解信任（聚焦博鳌亚洲论坛2025年年会）")?;
+
+        let reader = IndexReader::new_memory(w.finalize()?)?;
+
+        let mut results = Vec::new();
+        reader.search_no_score("中国", &BitmapFilter::all_match(), &mut results)?;
+        assert_eq!(results, vec![1, 9]);
+        reader.search_no_score("年", &BitmapFilter::all_match(), &mut results)?;
+        assert_eq!(results, vec![12]);
+        reader.search_no_score("今年", &BitmapFilter::all_match(), &mut results)?;
+        assert_eq!(results, vec![6]);
+        reader.search_no_score("报道图片", &BitmapFilter::all_match(), &mut results)?;
+        assert_eq!(results, vec![4]);
+        reader.search_no_score("中国年", &BitmapFilter::all_match(), &mut results)?;
+        assert_eq!(results, vec![1, 9, 12]);
 
         Ok(())
     }

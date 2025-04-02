@@ -19,6 +19,7 @@ set(_CLARA_INCLUDE_DIR "${_CLARA_GEN_DIR}")
 set(_CLARA_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/release/${CMAKE_STATIC_LIBRARY_PREFIX}clara${CMAKE_STATIC_LIBRARY_SUFFIX}")
 set(_CLARA_GEN_SRC_FILES
         # From `libclara/clare_fts/build.rs`.
+        "${_CLARA_GEN_DIR}/clara_fts/src/tokenizer/mod.rs.cc"
         "${_CLARA_GEN_DIR}/clara_fts/src/index_reader.rs.cc"
         "${_CLARA_GEN_DIR}/clara_fts/src/index_writer.rs.cc"
         "${_CLARA_GEN_DIR}/clara_fts/src/brute_searcher.rs.cc"

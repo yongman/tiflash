@@ -18,6 +18,7 @@ fn main() -> Result<()> {
     prost_build::compile_protos(&["src/directory/merged/proto.proto"], &["src"])?;
 
     let files = [
+        "src/tokenizer/mod.rs",
         "src/index_reader.rs",
         "src/index_writer.rs",
         "src/brute_searcher.rs",
