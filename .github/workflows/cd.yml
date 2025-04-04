@@ -38,6 +38,8 @@ jobs:
       CMAKE_COLOR_DIAGNOSTICS: ON
       # For dedicated image, use the version v8.5.0
       PRE_DEF_VERSION: ${{ inputs.update_dedicated_image && 'v8.5.0' || '' }}
+      CC: clang
+      CXX: clang++
     steps:
       - name: Setup minio
         run: |
@@ -103,6 +105,7 @@ jobs:
           cmake --build . --target tiflash --parallel $(nproc)
           rm -rf artifacts  # Clean up old artifacts. There is no workspace clean up.
           cmake --install . --component=tiflash-release --prefix=artifacts
+          ls -la artifacts/
 
       - name: Print Build Version
         run: |

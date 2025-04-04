@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <IO/FileProvider/FileProvider_fwd.h>
 #include <Storages/DeltaMerge/BitmapFilter/BitmapFilter.h>
 #include <Storages/DeltaMerge/ConcatSkippableBlockInputStream_fwd.h>
 #include <Storages/DeltaMerge/DMContext_fwd.h>
@@ -21,7 +22,6 @@
 #include <Storages/DeltaMerge/File/DMFilePackFilter_fwd.h>
 #include <Storages/DeltaMerge/File/DMFile_fwd.h>
 #include <Storages/DeltaMerge/Index/RSResult.h>
-#include <Storages/DeltaMerge/Index/VectorIndex/Reader_fwd.h>
 #include <Storages/DeltaMerge/ReadMode.h>
 #include <Storages/DeltaMerge/RowKeyRange.h>
 #include <Storages/DeltaMerge/SkippableBlockInputStream.h>

@@ -130,11 +130,13 @@ try
     const google::protobuf::RepeatedPtrField<tipb::Expr> filters{};
     const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters{};
     const auto ann_query_info = tipb::ANNQueryInfo{};
+    const auto fts_query_info = tipb::FTSQueryInfo{};
     TiDB::ColumnInfos source_columns{};
     const std::vector<int> runtime_filter_ids;
     query_info.dag_query = std::make_unique<DAGQueryInfo>(
         filters,
         ann_query_info,
+        fts_query_info,
         pushed_down_filters, // Not care now
         source_columns, // Not care now
         runtime_filter_ids,
@@ -688,11 +690,13 @@ try
     const google::protobuf::RepeatedPtrField<tipb::Expr> filters{};
     const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters{};
     const auto ann_query_info = tipb::ANNQueryInfo{};
+    const auto fts_query_info = tipb::FTSQueryInfo{};
     TiDB::ColumnInfos source_columns{};
     const std::vector<int> runtime_filter_ids;
     query_info.dag_query = std::make_unique<DAGQueryInfo>(
         filters,
         ann_query_info,
+        fts_query_info,
         pushed_down_filters, // Not care now
         source_columns, // Not care now
         runtime_filter_ids,
@@ -810,9 +814,11 @@ try
         TiDB::ColumnInfos source_columns{};
         const std::vector<int> runtime_filter_ids;
         const auto ann_query_info = tipb::ANNQueryInfo{};
+        const auto fts_query_info = tipb::FTSQueryInfo{};
         query_info.dag_query = std::make_unique<DAGQueryInfo>(
             filters,
             ann_query_info,
+            fts_query_info,
             pushed_down_filters, // Not care now
             source_columns, // Not care now
             runtime_filter_ids,

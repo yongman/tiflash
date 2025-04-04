@@ -487,6 +487,7 @@ DM::RSOperatorPtr StorageDisaggregated::buildRSOperator(
     auto dag_query = std::make_unique<DAGQueryInfo>(
         filter_conditions.conditions,
         table_scan.getANNQueryInfo(),
+        table_scan.getFTSQueryInfo(),
         table_scan.getPushedDownFilters(),
         table_scan.getColumns(),
         std::vector<int>{},
@@ -511,10 +512,14 @@ std::variant<DM::Remote::RNWorkersPtr, DM::SegmentReadTaskPoolPtr> StorageDisagg
     DM::ANNQueryInfoPtr ann_query_info = nullptr;
     if (table_scan.getANNQueryInfo().query_type() != tipb::ANNQueryType::InvalidQueryType)
         ann_query_info = std::make_shared<tipb::ANNQueryInfo>(table_scan.getANNQueryInfo());
+    DM::FTSQueryInfoPtr fts_query_info = nullptr;
+    if (table_scan.getFTSQueryInfo().query_type() != tipb::FTSQueryType::FTSQueryTypeInvalid)
+        fts_query_info = std::make_shared<tipb::FTSQueryInfo>(table_scan.getFTSQueryInfo());
     // build push down executor
     auto push_down_executor = DM::PushDownExecutor::build(
         rs_operator,
         ann_query_info,
+        fts_query_info,
         table_scan.getColumns(),
         table_scan.getPushedDownFilters(),
         *column_defines,

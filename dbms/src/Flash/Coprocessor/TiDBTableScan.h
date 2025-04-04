@@ -47,6 +47,8 @@ public:
 
     const tipb::ANNQueryInfo & getANNQueryInfo() const { return ann_query_info; }
 
+    const tipb::FTSQueryInfo & getFTSQueryInfo() const { return fts_query_info; }
+
 private:
     const tipb::Executor * table_scan;
     String executor_id;
@@ -68,6 +70,7 @@ private:
     const google::protobuf::RepeatedPtrField<tipb::Expr> pushed_down_filters;
 
     const tipb::ANNQueryInfo ann_query_info;
+    const tipb::FTSQueryInfo fts_query_info;
 
     bool keep_order;
     bool is_fast_scan;

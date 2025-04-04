@@ -2245,9 +2245,11 @@ try
     b.id = 2;
     TiDB::ColumnInfos column_infos = {a, b};
     const auto ann_query_info = tipb::ANNQueryInfo{};
+    const auto fts_query_info = tipb::FTSQueryInfo{};
     auto dag_query = std::make_unique<DAGQueryInfo>(
         filters,
         ann_query_info,
+        fts_query_info,
         pushed_down_filters, // Not care now
         column_infos,
         std::vector<int>{},

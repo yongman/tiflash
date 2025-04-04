@@ -179,6 +179,9 @@ private:
         case dtpb::IndexFileKind::VECTOR_INDEX:
             RUNTIME_CHECK(index_info.index_props().has_vector_index());
             break;
+        case dtpb::IndexFileKind::FULLTEXT_INDEX:
+            RUNTIME_CHECK(index_info.index_props().has_fulltext_index());
+            break;
         default:
             RUNTIME_CHECK_MSG(
                 false,

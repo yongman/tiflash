@@ -37,6 +37,7 @@ using RSOperatorPtr = std::shared_ptr<RSOperator>;
 class DMFileReader
 {
     friend class DMFileInputStreamProvideVectorIndex;
+    friend class DMFileInputStreamProvideFullTextIndex;
     friend class DMFileReaderPoolSharding;
 
 public:

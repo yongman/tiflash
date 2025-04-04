@@ -16,6 +16,7 @@ use std::io::Result;
 
 fn main() -> Result<()> {
     prost_build::compile_protos(&["src/directory/merged/proto.proto"], &["src"])?;
+    println!("cargo:rerun-if-changed=src/directory/merged/proto.proto");
 
     let files = [
         "src/tokenizer/mod.rs",
@@ -27,8 +28,5 @@ fn main() -> Result<()> {
     // Generate bridge only
     let _ = cxx_build::bridges(files);
 
-    for file in files.iter() {
-        println!("cargo:rerun-if-changed={}", file);
-    }
     Ok(())
 }

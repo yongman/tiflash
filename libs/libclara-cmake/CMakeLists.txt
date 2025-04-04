@@ -28,10 +28,37 @@ set(_CLARA_GEN_SRC_FILES
 file(MAKE_DIRECTORY ${_CLARA_INCLUDE_DIR})
 file(GLOB_RECURSE _CLARA_RUST_SRCS "${_CLARA_SOURCE_DIR}/*.rs")
 
+if (TIFLASH_LLVM_TOOLCHAIN)
+    set(TIFLASH_RUST_ENV CMAKE=${CMAKE_COMMAND} "CFLAGS=-fuse-ld=lld" "CXXFLAGS=-fuse-ld=lld -stdlib=libc++" ${TIFLASH_RUST_ENV})
+else()
+    set(TIFLASH_RUST_ENV CMAKE=${CMAKE_COMMAND} ${TIFLASH_RUST_ENV})
+endif()
+
+if(TIFLASH_LLVM_TOOLCHAIN AND USE_LIBCXX)
+    set(TIFLASH_RUST_LINKER ${CMAKE_CURRENT_BINARY_DIR}/tiflash-linker)
+    set(TIFLASH_RUST_LINKER_TMP ${CMAKE_CURRENT_BINARY_DIR}/tmp/tiflash-linker)
+    file(WRITE ${TIFLASH_RUST_LINKER_TMP}
+            "#!/usr/bin/env sh\n${CMAKE_CXX_COMPILER} -l:libc++.so -l:libc++abi.so $@")
+    file(COPY ${TIFLASH_RUST_LINKER_TMP}
+            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
+            FILE_PERMISSIONS OWNER_WRITE OWNER_READ OWNER_EXECUTE)
+    set(TIFLASH_RUSTFLAGS "-C rpath=yes -C linker=${TIFLASH_RUST_LINKER}")
+    if(ARCH_AARCH64)
+        set(TIFLASH_RUSTFLAGS "-C link-arg=-Wl,-Bsymbolic ${TIFLASH_RUSTFLAGS}")
+    endif()
+    if(LINKER_NAME)
+        set(TIFLASH_RUSTFLAGS "-C link-arg=-fuse-ld=${LINKER_NAME} ${TIFLASH_RUSTFLAGS}")
+    endif()
+    set(TIFLASH_RUST_ENV CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} CXXSTDLIB=c++ RUSTFLAGS=${TIFLASH_RUSTFLAGS} ${TIFLASH_RUST_ENV})
+    message(STATUS "Enforce LLVM toolchain for libclara")
+endif()
+
+message(STATUS "Using rust env for libclara: ${TIFLASH_RUST_ENV}")
+
 # This will build all workspace crates.
 add_custom_command(OUTPUT ${_CLARA_LIBRARY} ${_CLARA_GEN_SRC_FILES}
         COMMENT "Building libclara"
-        COMMAND cargo build --release --target-dir ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND ${CMAKE_COMMAND} -E env ${TIFLASH_RUST_ENV} cargo build --release --target-dir ${CMAKE_CURRENT_BINARY_DIR}
         VERBATIM
         USES_TERMINAL
         WORKING_DIRECTORY ${_CLARA_SOURCE_DIR}
