@@ -102,6 +102,9 @@
 #include <sys/resource.h>
 
 #include <ext/scope_guard.h>
+#include <filesystem>
+#include <iterator>
+#include <limits>
 #include <magic_enum.hpp>
 #include <memory>
 #include <thread>
