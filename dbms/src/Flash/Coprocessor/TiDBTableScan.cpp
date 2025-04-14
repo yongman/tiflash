@@ -87,7 +87,6 @@ void copyUsedColumnarIndexesFromPartitionTableScan(
 
 } // namespace
 
-
 TiDBTableScan::TiDBTableScan(
     const tipb::Executor * table_scan_,
     const String & executor_id_,
