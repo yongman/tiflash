@@ -267,6 +267,7 @@ struct Settings
     \
     /* DDL */ \
     M(SettingUInt64, ddl_sync_interval_seconds, 60, "The interval of background DDL sync schema in seconds. Only has meaning at server startup.")                                                                                       \
+    M(SettingUInt64, ddl_gc_interval_seconds, 60, "The interval of background gc in seconds when sync schema, set it to value larger than ddl_sync_interval_seconds could reduce gc frequency seperately ")                                                                                        \
     M(SettingUInt64, ddl_restart_wait_seconds, 180, "The wait time for sync schema in seconds when restart. Only has meaning at server startup.")                                                                                       \
     \
     /* Runtime Filter */ \

@@ -95,8 +95,11 @@ void SchemaSyncService::addKeyspaceGCTasks()
                         GET_METRIC(tiflash_schema_trigger_count, type_timer).Increment();
 
                     stage = "GC";
-                    auto gc_safe_point
-                        = PDClientHelper::getGCSafePointWithRetry(context.getTMTContext().getPDClient(), keyspace);
+                    auto gc_safe_point = PDClientHelper::getGCSafePointWithRetry(
+                        context.getTMTContext().getPDClient(),
+                        keyspace,
+                        /* ignore_cache= */ false,
+                        context.getSettingsRef().ddl_gc_interval_seconds);
                     done_anything = gc(gc_safe_point, keyspace);
 
                     return done_anything;
