@@ -54,7 +54,7 @@ struct KeyspaceGCInfo
     KeyspaceGCInfo(const KeyspaceGCInfo & other)
     {
         ks_gc_sp = other.ks_gc_sp;
-        ks_gc_sp_update_time = std::chrono::steady_clock::now();
+        ks_gc_sp_update_time.store(other.ks_gc_sp_update_time.load());
     }
 
     KeyspaceGCInfo & operator=(const KeyspaceGCInfo & other)
@@ -62,7 +62,7 @@ struct KeyspaceGCInfo
         if (this != &other)
         {
             ks_gc_sp = other.ks_gc_sp;
-            ks_gc_sp_update_time = std::chrono::steady_clock::now();
+            ks_gc_sp_update_time.store(other.ks_gc_sp_update_time.load());
         }
         return *this;
     }
@@ -173,6 +173,12 @@ struct PDClientHelper
                 = std::chrono::duration_cast<std::chrono::seconds>(now - ks_gc_info.ks_gc_sp_update_time.load());
             const auto min_interval
                 = std::max(static_cast<Int64>(1), safe_point_update_interval_seconds); // at least one second
+            LOG_DEBUG(
+                Logger::get(),
+                "getGCSafePointV2WithRetry, keyspace={} duration={} min_interval={}",
+                keyspace_id,
+                duration.count(),
+                min_interval);
             if (duration.count() < min_interval)
             {
                 return ks_gc_info.ks_gc_sp;
@@ -186,6 +192,11 @@ struct PDClientHelper
             {
                 auto ks_gc_sp = pd_client->getGCSafePointV2(keyspace_id);
                 updateKeyspaceGCSafepointMap(keyspace_id, ks_gc_sp);
+                LOG_DEBUG(
+                    Logger::get(),
+                    "getGCSafePointV2WithRetry from PD, cache miss, keyspace={} gc_safe_point={}",
+                    keyspace_id,
+                    ks_gc_sp);
                 return ks_gc_sp;
             }
             catch (pingcap::Exception & e)
