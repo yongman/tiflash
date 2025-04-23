@@ -16,13 +16,26 @@
 
 #include <TestUtils/TiFlashTestBasic.h>
 
+#include <ext/scope_guard.h>
+
 namespace DB
 {
 namespace base
 {
+
 class TiFlashStorageTestBasic : public ::testing::Test
 {
+private:
+    inline static std::string overrideTestName_ = "";
+
 public:
+    [[nodiscard]] static auto overrideTestName(const std::string & name)
+    {
+        overrideTestName_ = name;
+        // Because overrideTestName_ is a static variable, we need to clear it after the test case.
+        return ext::make_scope_guard([&] { overrideTestName_.clear(); });
+    }
+
     static std::string getCurrentFullTestName()
     {
         std::string buffer;
@@ -47,6 +60,10 @@ public:
                     buffer += '.';
                 buffer += info->type_param();
             }
+        }
+        else if (!overrideTestName_.empty())
+        {
+            return overrideTestName_;
         }
         else
         {

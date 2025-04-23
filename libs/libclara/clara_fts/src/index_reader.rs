@@ -18,6 +18,7 @@ use anyhow::{anyhow, bail, Result};
 
 pub use ffi::BitmapFilter;
 pub use ffi::ScoredResult;
+use tantivy::schema::Value;
 
 /// IndexReader reads index file for full text searching.
 pub struct IndexReader {
@@ -85,14 +86,11 @@ impl IndexReader {
         let doc = searcher.doc::<tantivy::TantivyDocument>(tantivy::DocAddress::new(0, doc_id))?;
         let value = doc
             .get_first(self.field_body)
-            .ok_or_else(|| anyhow::anyhow!("No value for doc_id={}", doc_id))?;
-        match value {
-            tantivy::schema::OwnedValue::Str(s) => {
-                result.push_str(s);
-                Ok(())
-            }
-            _ => bail!("Unexpected field type for doc_id={}", doc_id),
-        }
+            .ok_or_else(|| anyhow::anyhow!("No value for doc_id={}", doc_id))?
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Unexpected field type for doc_id={}", doc_id))?;
+        result.push_str(value);
+        Ok(())
     }
 
     /// Only used in tests as a handy get().

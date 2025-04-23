@@ -14,6 +14,7 @@
 
 
 #include <Columns/ColumnVector.h>
+#include <Columns/countBytesInFilter.h>
 #include <Columns/filterColumn.h>
 #include <Common/typeid_cast.h>
 #include <benchmark/benchmark.h>
@@ -29,7 +30,7 @@ IColumn::Filter createRandomFilter(size_t n, size_t set_n)
     assert(n >= set_n);
 
     IColumn::Filter filter(set_n, 1);
-    filter.resize_fill_zero(n, 0);
+    filter.resize_fill(n, 0);
 
     std::random_device rd;
     std::mt19937 g(rd());

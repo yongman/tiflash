@@ -52,12 +52,10 @@ public:
         return BitmapFilterView(filter, filter_offset + offset, size);
     }
 
-    IColumn::Filter getRawSubFilter(UInt32 offset, UInt32 size) const
+    std::span<const UInt8> span(UInt32 offset, UInt32 size) const
     {
         RUNTIME_CHECK(offset + size <= filter_size, offset, size, filter_size);
-        return IColumn::Filter{
-            filter->filter.data() + filter_offset + offset,
-            filter->filter.data() + filter_offset + offset + size};
+        return {filter->filter.data() + filter_offset + offset, filter->filter.data() + filter_offset + offset + size};
     }
 
     // Caller should ensure n in [0, size).

@@ -64,9 +64,9 @@ Block FullTextBruteScoreInputStream::read()
         }
 
         // We filter rows only at the search time.
-        const auto raw_filter = bitmap_filter->getRawSubFilter(block.startOffset(), block.rows());
+        const auto raw_filter = bitmap_filter->span(block.startOffset(), block.rows());
         ClaraFTS::BitmapFilter filter;
-        filter.match_partial = rust::Slice<const UInt8>(raw_filter.data(), raw_filter.size());
+        filter.match_partial = rust::Slice<const UInt8>(raw_filter);
         filter.match_all = false;
         brute_searcher.search(filter, ctx->results);
     }

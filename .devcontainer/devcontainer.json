@@ -7,6 +7,7 @@
   // "init": true,
   "capAdd": [
     "SYS_PTRACE",
+    "SYS_ADMIN",
   ],
   "securityOpt": [
     "seccomp=unconfined",

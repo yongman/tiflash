@@ -87,6 +87,9 @@ jobs:
         run: |
           cd cmake-build-Debug
           cmake --build . --target gtests_dbms tiflash --parallel $(nproc)
+          rm -rf artifacts
+          cmake --install . --component=tiflash-gtest --prefix=artifacts
+          ls -la artifacts/
 
       - name: Cache TiFlash Proxy
         if: steps.proxy_cache.outputs.USE_INTERNAL_TIFLASH_PROXY == 'ON'
@@ -96,9 +99,7 @@ jobs:
       - name: Upload Artifact
         if: matrix.arch == 'X64' # Only run unit tests on X64
         run: |
-          mc cp ./cmake-build-Debug/dbms/gtests_dbms minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/gtests_dbms
-          mc cp ./cmake-build-Debug/contrib/GmSSL/lib/libgmssl.so.3.0 minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/libgmssl.so.3
-          mc cp ./cmake-build-Debug/libs/libclara-cmake/libclara_sharedd.so minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/libclara_sharedd.so
+          mc cp ./cmake-build-Debug/artifacts/* minio_server/tiflash-cse-ci/ci_unit_test_artifact/${{ github.run_id }}/
 
   unit_test:
     name: Unit Test

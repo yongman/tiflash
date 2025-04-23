@@ -176,8 +176,18 @@ set (CMAKE_CXX_STANDARD 23)
 set (CMAKE_CXX_EXTENSIONS 1) # https://cmake.org/cmake/help/latest/prop_tgt/CXX_EXTENSIONS.html#prop_tgt:CXX_EXTENSIONS
 set (CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set (CMAKE_CXX_FLAGS_RELWITHDEBINFO      "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O3")
-set (CMAKE_C_FLAGS_RELWITHDEBINFO        "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O3")
+option (PROFILING_FRIENDLY "Make the executable friendly for profiling, binary size will be larger" OFF)
+if (PROFILING_FRIENDLY)
+    if (NOT CMAKE_BUILD_TYPE_UC STREQUAL "RELWITHDEBINFO")
+        message (FATAL_ERROR "PROFILING_FRIENDLY can be used only with RELWITHDEBINFO. DEBUG does not make sense for profiling.")
+    endif ()
+    # dwarf-5 is not widely supported
+    set (CMAKE_CXX_FLAGS_RELWITHDEBINFO      "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O2 -fno-omit-frame-pointer -g3 -gdwarf-4")
+    set (CMAKE_C_FLAGS_RELWITHDEBINFO        "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O2 -fno-omit-frame-pointer -g3 -gdwarf-4")
+else ()
+    set (CMAKE_CXX_FLAGS_RELWITHDEBINFO      "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O3")
+    set (CMAKE_C_FLAGS_RELWITHDEBINFO        "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O3")
+endif ()
 
 option (DEBUG_WITHOUT_DEBUG_INFO "Set to ON to build dev target without debug info (remove flag `-g` in order to accelerate compiling speed and reduce target binary size)" OFF)
 if (DEBUG_WITHOUT_DEBUG_INFO)
@@ -312,6 +322,7 @@ include (cmake/find_tipb.cmake)
 include (cmake/find_curl.cmake)
 include (cmake/find_prometheus.cmake)
 include (cmake/find_tiflash_proxy.cmake)
+include (cmake/find_libclara.cmake)
 include (cmake/find_xxhash.cmake)
 
 if (OS_LINUX AND ARCH_AMD64 AND TIFLASH_ENABLE_AVX512_SUPPORT)

@@ -35,9 +35,9 @@ void FullTextIndexReader::searchNoScore(
     });
 
     // TODO: Utilize match_all=true
-    const auto raw_filter = valid_rows.getRawSubFilter(0, valid_rows.size());
+    const auto raw_filter = valid_rows.span(0, valid_rows.size());
     ClaraFTS::BitmapFilter filter;
-    filter.match_partial = rust::Slice<const UInt8>(raw_filter.data(), raw_filter.size());
+    filter.match_partial = rust::Slice<const UInt8>(raw_filter);
     filter.match_all = false;
     return inner->search_no_score(query, filter, results);
 }
@@ -57,9 +57,9 @@ void FullTextIndexReader::searchScored(
     });
 
     // TODO: Utilize match_all=true
-    const auto raw_filter = valid_rows.getRawSubFilter(0, valid_rows.size());
+    const auto raw_filter = valid_rows.span(0, valid_rows.size());
     ClaraFTS::BitmapFilter filter;
-    filter.match_partial = rust::Slice<const UInt8>(raw_filter.data(), raw_filter.size());
+    filter.match_partial = rust::Slice<const UInt8>(raw_filter);
     filter.match_all = false;
     return inner->search_scored(query, filter, results);
 }
