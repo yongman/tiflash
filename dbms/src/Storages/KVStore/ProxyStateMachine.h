@@ -54,11 +54,12 @@ struct TiFlashProxyConfig
         Poco::Util::LayeredConfiguration & config,
         const DisaggregatedMode disaggregated_mode,
         const bool use_autoscaler,
+        const bool use_columnar,
         const StorageFormatVersion & format_version,
         const Settings & settings,
         const LoggerPtr & log)
     {
-        is_proxy_runnable = tryParseFromConfig(config, disaggregated_mode, use_autoscaler, log);
+        is_proxy_runnable = tryParseFromConfig(config, disaggregated_mode, use_autoscaler, use_columnar, log);
 
         // Enable unips according to `format_version`
         if (format_version.page == PageFormat::V4)
@@ -102,7 +103,11 @@ struct TiFlashProxyConfig
         for (const auto & [k, v] : val_map)
         {
             args.push_back(k.data());
-            args.push_back(v.data());
+            // Support flag args with empty value.
+            if (!v.empty())
+            {
+                args.push_back(v.data());
+            }
         }
         return args;
     }
@@ -127,13 +132,28 @@ private:
         const Poco::Util::LayeredConfiguration & config,
         const DisaggregatedMode disaggregated_mode,
         const bool use_autoscaler,
+        const bool use_columnar,
         const LoggerPtr & log)
     {
-        // tiflash_compute doesn't need proxy.
+        bool init_only = false;
+        // tiflash_compute doesn't need proxy except when using columnar.
         if (disaggregated_mode == DisaggregatedMode::Compute && use_autoscaler)
         {
-            LOG_INFO(log, "TiFlash Proxy will not start because AutoScale Disaggregated Compute Mode is specified.");
-            return false;
+            if (use_columnar)
+            {
+                LOG_INFO(
+                    log,
+                    "TiFlash Proxy will start because columnar is enabled with AutoScale Disaggregated Compute Mode is "
+                    "specified.");
+                init_only = true;
+            }
+            else
+            {
+                LOG_INFO(
+                    log,
+                    "TiFlash Proxy will not start because AutoScale Disaggregated Compute Mode is specified.");
+                return false;
+            }
         }
 
         Poco::Util::AbstractConfiguration::Keys keys;
@@ -187,6 +207,8 @@ private:
 #if SERVERLESS_PROXY == 1
             if (config.has("blacklist_file"))
                 args_map["blacklist-file"] = config.getString("blacklist_file");
+            if (init_only)
+                args_map["init-only"] = "";
 #endif
 
             for (auto && [k, v] : args_map)

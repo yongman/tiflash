@@ -74,18 +74,37 @@ void DataTypeDecimal<T>::serializeBinaryBulk(const IColumn & column, WriteBuffer
     ostr.write(reinterpret_cast<const char *>(&x[offset]), sizeof(FieldType) * limit);
 }
 
+// param avg_value_size_hint is used to indicate format.
+// If avg_value_size_hint == -1, it means the serialization format from proxy. Otherwise, it is from tiflash.
 template <typename T>
 void DataTypeDecimal<T>::deserializeBinaryBulk(
     IColumn & column,
     ReadBuffer & istr,
     size_t limit,
-    double /*avg_value_size_hint*/) const
+    double avg_value_size_hint) const
 {
     typename ColumnType::Container & x = typeid_cast<ColumnType &>(column).getData();
-    size_t initial_size = x.size();
-    x.resize(initial_size + limit);
-    size_t size = istr.readBig(reinterpret_cast<char *>(&x[initial_size]), sizeof(FieldType) * limit);
-    x.resize(initial_size + size / sizeof(FieldType));
+    if (avg_value_size_hint < 0.0 && is_Decimal256)
+    {
+        for (size_t i = 0; i < limit; ++i)
+        {
+            // For cse columnar compatibility, we need to transform the i256(32 bytes) to boost i256(48 bytes) format.
+            Int128 low, high;
+            istr.readBig(reinterpret_cast<char *>(&low), sizeof(low));
+            istr.readBig(reinterpret_cast<char *>(&high), sizeof(high));
+            Int256 result = static_cast<Int256>(low);
+            result += (static_cast<Int256>(high) << 128);
+            Decimal256 dec(result);
+            x.push_back(FieldType(dec));
+        }
+    }
+    else
+    {
+        size_t initial_size = x.size();
+        x.resize(initial_size + limit);
+        size_t size = istr.readBig(reinterpret_cast<char *>(&x[initial_size]), sizeof(FieldType) * limit);
+        x.resize(initial_size + size / sizeof(FieldType));
+    }
 }
 
 template <typename T>

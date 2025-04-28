@@ -47,6 +47,9 @@ BlockInputStreams StorageDisaggregated::read(
     size_t,
     unsigned num_streams)
 {
+    /// Read column data from proxy
+    if (isReadColumnar())
+        return readThroughProxy(context, num_streams);
     RUNTIME_CHECK_MSG(S3::ClientFactory::instance().isEnabled(), "storage disaggregated mode must with S3.");
     return readThroughS3(db_context, num_streams);
 }
@@ -60,6 +63,9 @@ void StorageDisaggregated::read(
     size_t /*max_block_size*/,
     unsigned num_streams)
 {
+    // Read column data from proxy
+    if (isReadColumnar())
+        return readThroughProxy(exec_context, group_builder, context, num_streams);
     RUNTIME_CHECK_MSG(S3::ClientFactory::instance().isEnabled(), "storage disaggregated mode must with S3.");
     return readThroughS3(exec_context, group_builder, db_context, num_streams);
 }

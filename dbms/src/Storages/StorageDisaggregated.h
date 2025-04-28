@@ -81,6 +81,14 @@ private:
         const Context & db_context,
         unsigned num_streams);
 
+    bool isReadColumnar();
+    BlockInputStreams readThroughProxy(const Context & db_context, unsigned num_streams);
+    void readThroughProxy(
+        PipelineExecutorContext & exec_context,
+        PipelineExecGroupBuilder & group_builder,
+        const Context & db_context,
+        unsigned num_streams);
+
     DM::SegmentReadTasks buildReadTaskWithBackoff(const Context & db_context);
 
     DM::SegmentReadTasks buildReadTask(const Context & db_context, const DM::ScanContextPtr & scan_context);
@@ -132,6 +140,12 @@ private:
 
     void filterConditions(DAGExpressionAnalyzer & analyzer, DAGPipeline & pipeline);
     void filterConditions(
+        PipelineExecutorContext & exec_context,
+        PipelineExecGroupBuilder & group_builder,
+        DAGExpressionAnalyzer & analyzer);
+    // For readThroughProxy
+    void filterConditionsWithPushedDownFilters(DAGExpressionAnalyzer & analyzer, DAGPipeline & pipeline);
+    void filterConditionsWithPushedDownFilters(
         PipelineExecutorContext & exec_context,
         PipelineExecGroupBuilder & group_builder,
         DAGExpressionAnalyzer & analyzer);

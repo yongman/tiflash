@@ -140,6 +140,7 @@ TMTContext::TMTContext(
     , kvstore(
           context_.getSharedContextDisagg()->isDisaggregatedComputeMode()
                   && context_.getSharedContextDisagg()->use_autoscaler
+                  && !context_.getSharedContextDisagg()->use_columnar // read_columnar need kvstore
               ? nullptr
               : std::make_shared<KVStore>(context))
     , region_table(context)
@@ -263,9 +264,16 @@ void TMTContext::updateSecurityConfig(
 void TMTContext::restore(PathPool & path_pool, const TiFlashRaftProxyHelper * proxy_helper)
 {
     // For tiflash_compute mode, kvstore should be nullptr, no need to restore region_table.
+    bool use_columnar = context.getSharedContextDisagg()->use_columnar;
     if (context.getSharedContextDisagg()->isDisaggregatedComputeMode()
         && context.getSharedContextDisagg()->use_autoscaler)
+    {
+        if (use_columnar)
+        {
+            kvstore->restoreProxyHelper(proxy_helper);
+        }
         return;
+    }
 
     kvstore->restore(path_pool, proxy_helper);
     region_table.restore();

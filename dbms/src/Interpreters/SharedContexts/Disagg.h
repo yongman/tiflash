@@ -50,6 +50,9 @@ struct SharedContextDisagg : private boost::noncopyable
     // Only meaningful in DisaggregatedComputeMode.
     bool use_autoscaler = false;
 
+    // Only meaningful in DisaggregatedComputeMode. Use cloud-engine columnar as upstream.
+    bool use_columnar = false;
+
     /// For both read node (downloading) and write node (uploading).
     DM::Remote::IDataStorePtr remote_data_store;
 
