@@ -137,11 +137,22 @@ SegmentReadTask::SegmentReadTask(
                 {
                     for (const auto & index_info : *index_infos)
                     {
-                        RUNTIME_CHECK(index_info.has_index_page_id());
-                        RUNTIME_CHECK(index_info.index_props().has_kind());
-                        remote_page_ids.emplace_back(index_info.index_page_id());
-                        remote_page_sizes.emplace_back(index_info.index_props().file_size());
-                        ++count;
+                        // CN will be upgraded first, so we may receive old version of index_info.
+                        if unlikely (index_info.has_deprecated_vector_index())
+                        {
+                            RUNTIME_CHECK(index_info.has_index_page_id());
+                            remote_page_ids.emplace_back(index_info.index_page_id());
+                            remote_page_sizes.emplace_back(index_info.deprecated_vector_index().index_bytes());
+                            ++count;
+                        }
+                        else
+                        {
+                            RUNTIME_CHECK(index_info.has_index_page_id());
+                            RUNTIME_CHECK(index_info.index_props().has_kind());
+                            remote_page_ids.emplace_back(index_info.index_page_id());
+                            remote_page_sizes.emplace_back(index_info.index_props().file_size());
+                            ++count;
+                        }
                     }
                 }
             }
