@@ -360,6 +360,13 @@ void SchemaBuilder<Getter, NameMapper>::applyDiff(const SchemaDiff & diff)
         applySetTiFlashReplica(diff.schema_id, diff.table_id);
         break;
     }
+    case SchemaActionType::ActionModifyEngineAttribute:
+    case SchemaActionType::ActionAlterTableMode:
+    case SchemaActionType::ActionRefreshMeta:
+    {
+        // Ignore these actions for now
+        break;
+    }
     default:
     {
         if (diff.type < SchemaActionType::MaxRecognizedType)
