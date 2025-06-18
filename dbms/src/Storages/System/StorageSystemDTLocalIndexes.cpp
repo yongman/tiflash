@@ -19,12 +19,19 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <Databases/DatabaseTiFlash.h>
 #include <Databases/IDatabase.h>
+#include <Flash/Coprocessor/DAGQueryInfo.h>
 #include <Interpreters/Context.h>
+#include <Parsers/ASTFunction.h>
+#include <Parsers/ASTIdentifier.h>
+#include <Parsers/ASTLiteral.h>
+#include <Parsers/ASTSelectQuery.h>
 #include <Storages/DeltaMerge/DeltaMergeStore.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/KVStore/TMTStorages.h>
 #include <Storages/KVStore/Types.h>
 #include <Storages/MutableSupport.h>
+#include <Storages/RegionQueryInfo.h>
+#include <Storages/SelectQueryInfo.h>
 #include <Storages/StorageDeltaMerge.h>
 #include <Storages/System/StorageSystemDTLocalIndexes.h>
 #include <TiDB/Schema/SchemaNameMapper.h>
@@ -74,9 +81,25 @@ std::optional<DM::LocalIndexesStats> getLocalIndexesStatsFromStorage(const Stora
     return DM::DeltaMergeStore::genLocalIndexStatsByTableInfo(table_info);
 }
 
+KeyspaceID parseKeyspaceID(const SelectQueryInfo & query_info)
+{
+    const auto & select = typeid_cast<const ASTSelectQuery &>(*query_info.query);
+    const auto & where_expression = select.where_expression;
+    const auto & func_equal = typeid_cast<const ASTFunction &>(*where_expression);
+    for (size_t i = 0; i < func_equal.arguments->children.size(); i += 2)
+    {
+        const auto & identifier = typeid_cast<const ASTIdentifier &>(*func_equal.arguments->children[i]);
+        if (identifier.name != "keyspace_id")
+            continue;
+        const auto & literal = typeid_cast<const ASTLiteral &>(*func_equal.arguments->children[i + 1]);
+        return literal.value.get<KeyspaceID>();
+    }
+    return NullspaceID;
+}
+
 BlockInputStreams StorageSystemDTLocalIndexes::read(
     const Names & column_names,
-    const SelectQueryInfo &,
+    const SelectQueryInfo & query_info,
     const Context & context,
     QueryProcessingStage::Enum & processed_stage,
     const size_t /*max_block_size*/,
@@ -90,12 +113,18 @@ BlockInputStreams StorageSystemDTLocalIndexes::read(
     SchemaNameMapper mapper;
 
     auto databases = context.getDatabases();
+    const auto keyspace_id = parseKeyspaceID(query_info);
     for (const auto & d : databases)
     {
         String database_name = d.first;
         const auto & database = d.second;
         const DatabaseTiFlash * db_tiflash = typeid_cast<DatabaseTiFlash *>(database.get());
-
+        if (db_tiflash)
+        {
+            const auto & db_info = db_tiflash->getDatabaseInfo();
+            if (keyspace_id != NullspaceID && db_info.keyspace_id != keyspace_id)
+                continue;
+        }
         auto it = database->getIterator(context);
         for (; it->isValid(); it->next())
         {
