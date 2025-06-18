@@ -19,12 +19,19 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <Databases/DatabaseTiFlash.h>
 #include <Databases/IDatabase.h>
+#include <Flash/Coprocessor/DAGQueryInfo.h>
 #include <Interpreters/Context.h>
+#include <Parsers/ASTFunction.h>
+#include <Parsers/ASTIdentifier.h>
+#include <Parsers/ASTLiteral.h>
+#include <Parsers/ASTSelectQuery.h>
 #include <Storages/DeltaMerge/DeltaMergeStore.h>
 #include <Storages/DeltaMerge/Index/LocalIndexInfo.h>
 #include <Storages/KVStore/TMTStorages.h>
 #include <Storages/KVStore/Types.h>
 #include <Storages/MutableSupport.h>
+#include <Storages/RegionQueryInfo.h>
+#include <Storages/SelectQueryInfo.h>
 #include <Storages/StorageDeltaMerge.h>
 #include <Storages/System/StorageSystemDTLocalIndexes.h>
 #include <TiDB/Schema/SchemaNameMapper.h>
@@ -74,9 +81,26 @@ std::optional<DM::LocalIndexesStats> getLocalIndexesStatsFromStorage(const Stora
     return DM::DeltaMergeStore::genLocalIndexStatsByTableInfo(table_info);
 }
 
+KeyspaceID parseKeyspaceID(const SelectQueryInfo & query_info)
+{
+    const auto & select = typeid_cast<const ASTSelectQuery &>(*query_info.query);
+    const auto & where_expression = select.where_expression;
+    const auto * func = typeid_cast<const ASTFunction *>(where_expression.get());
+    // TODO: support other functions.
+    if (!func || func->name != "equals" || func->arguments->children.size() != 2)
+        return NullspaceID;
+    const auto * identifier = typeid_cast<const ASTIdentifier *>(func->arguments->children[0].get());
+    if (!identifier || identifier->name != "keyspace_id")
+        return NullspaceID;
+    const auto * literal = typeid_cast<const ASTLiteral *>(func->arguments->children[1].get());
+    if (!literal)
+        return NullspaceID;
+    return literal->value.get<KeyspaceID>();
+}
+
 BlockInputStreams StorageSystemDTLocalIndexes::read(
     const Names & column_names,
-    const SelectQueryInfo &,
+    const SelectQueryInfo & query_info,
     const Context & context,
     QueryProcessingStage::Enum & processed_stage,
     const size_t /*max_block_size*/,
@@ -90,11 +114,18 @@ BlockInputStreams StorageSystemDTLocalIndexes::read(
     SchemaNameMapper mapper;
 
     auto databases = context.getDatabases();
+    const auto parsed_keyspace_id = parseKeyspaceID(query_info);
     for (const auto & d : databases)
     {
         String database_name = d.first;
         const auto & database = d.second;
         const DatabaseTiFlash * db_tiflash = typeid_cast<DatabaseTiFlash *>(database.get());
+        if (!db_tiflash)
+            continue;
+
+        const auto keyspace_id = db_tiflash->getDatabaseInfo().keyspace_id;
+        if (parsed_keyspace_id != NullspaceID && keyspace_id != parsed_keyspace_id)
+            continue;
 
         auto it = database->getIterator(context);
         for (; it->isValid(); it->next())
@@ -118,12 +149,7 @@ BlockInputStreams StorageSystemDTLocalIndexes::read(
                 res_columns[j++]->insert(table_name);
 
                 String tidb_db_name;
-                KeyspaceID keyspace_id = NullspaceID;
-                if (db_tiflash)
-                {
-                    tidb_db_name = db_tiflash->getDatabaseInfo().name;
-                    keyspace_id = db_tiflash->getDatabaseInfo().keyspace_id;
-                }
+                tidb_db_name = db_tiflash->getDatabaseInfo().name;
                 res_columns[j++]->insert(tidb_db_name);
                 String tidb_table_name = table_info.name;
                 res_columns[j++]->insert(tidb_table_name);
