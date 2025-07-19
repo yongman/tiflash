@@ -34,24 +34,25 @@ jobs:
           cd contrib/tiflash-proxy
           git fetch origin
           git checkout ${{ github.event.inputs.proxy_commit }}
-          cd ../..
-          git add contrib/tiflash-proxy
 
       - name: Create Pull Request
         id: cpr
         uses: peter-evans/create-pull-request@v5
         with:
+          base: cloud-engine-on-release-8.5
           token: ${{ secrets.GIT_ACTION_BOT }}
           commit-message: "proxy: Bump to ${{ github.event.inputs.proxy_commit }}"
           committer: GitHub <noreply@github.com>
           author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
           signoff: true
-          branch: "bump-proxy/${{ github.event.inputs.proxy_commit }}"
           delete-branch: true
           assignees: ${{ github.actor }}
+          branch-suffix: short-commit-hash
+          add-paths: |
+            contrib/tiflash-proxy
           title: "proxy: Bump to ${{ github.event.inputs.proxy_commit }}"
           body: |
-            Update proxy to https://github.com/tidbcloud/cloud-storage-engine/commits/${{ github.event.inputs.proxy_commit }}"
+            Update proxy to https://github.com/tidbcloud/cloud-storage-engine/commits/${{ github.event.inputs.proxy_commit }}
 
             This PR is triggered by:
             - ${{ github.actor }}
@@ -80,16 +81,26 @@ jobs:
       - name: Back ping
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GIT_ACTION_BOT }}
           script: |
-            // Resolve the PR number from commit
-            const pr = (await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              commit_sha: ${{ github.event.inputs.proxy_commit }},
+            const { data: commit } = (await github.rest.repos.getCommit({
+              ref: "${{ github.event.inputs.proxy_commit }}",
               owner: "tidbcloud",
               repo: "cloud-storage-engine",
-            })).data[0];
+            }));
 
-            if (!pr)
+            if (!commit) {
               return;
+            }
+
+            // Resolve the PR number from commit title
+            const messageTitle = commit.commit.message.split('\n')[0].trim();
+            const prMatch = messageTitle.match(/\(#(\d+)\)$/);
+            if (!prMatch) {
+              return;
+            }
+
+            const prNumber = Number(prMatch[1]);
 
             const notifyBody = `
             :white_check_mark: Bump TiFlash proxy PR is created:
@@ -98,7 +109,7 @@ jobs:
             `;
 
             await github.rest.issues.createComment({
-              issue_number: pr.number,
+              issue_number: prNumber,
               owner: "tidbcloud",
               repo: "cloud-storage-engine",
               body: notifyBody,
