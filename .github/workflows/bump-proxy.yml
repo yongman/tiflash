@@ -7,6 +7,10 @@ on:
         description: "Update to this TiFlash Proxy commit hash"
         required: true
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   bump-proxy:
     runs-on:
@@ -15,16 +19,21 @@ jobs:
       - X64
     timeout-minutes: 20
     steps:
+      - name: Debug
+        run: |
+          git --version
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.GIT_ACTION_BOT }}
           fetch-depth: 0
           clean: false
 
       - name: Update tiflash-proxy submodule
         run: |
+          git submodule update --init --recursive
+          git submodule status
           cd contrib/tiflash-proxy
           git fetch origin
           git checkout ${{ github.event.inputs.proxy_commit }}
@@ -35,7 +44,7 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.GIT_ACTION_BOT }}
           commit-message: "proxy: Bump to ${{ github.event.inputs.proxy_commit }}"
           committer: GitHub <noreply@github.com>
           author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
@@ -48,7 +57,6 @@ jobs:
             Update proxy to https://github.com/tidbcloud/cloud-storage-engine/commits/${{ github.event.inputs.proxy_commit }}"
 
             This PR is triggered by:
-            - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             - ${{ github.actor }}
           labels: |
             automated pr
@@ -58,9 +66,43 @@ jobs:
           echo "Pull Request Number - ${{ steps.cpr.outputs.pull-request-number }}"
           echo "Pull Request URL - ${{ steps.cpr.outputs.pull-request-url }}"
 
+      - name: Enable Pull Request Automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        uses: peter-evans/enable-pull-request-automerge@v1
+        with:
+          token: ${{ secrets.GIT_ACTION_BOT }}
+          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          merge-method: squash
+
       - name: Approve the PR
         if: steps.cpr.outputs.pull-request-operation == 'created'
         uses: hmarr/auto-approve-action@v3
         with:
-          github-token: ${{ secrets.GIT_ACTION_BOT }}
           pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+
+      - name: Back ping
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Resolve the PR number from commit
+            const pr = (await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              commit_sha: ${{ github.event.inputs.proxy_commit }},
+              owner: "tidbcloud",
+              repo: "cloud-storage-engine",
+            })).data[0];
+
+            if (!pr)
+              return;
+
+            const notifyBody = `
+            :white_check_mark: Bump TiFlash proxy PR is created:
+
+            ${{ steps.cpr.outputs.pull-request-url }}
+            `;
+
+            await github.rest.issues.createComment({
+              issue_number: pr.number,
+              owner: "tidbcloud",
+              repo: "cloud-storage-engine",
+              body: notifyBody,
+            });

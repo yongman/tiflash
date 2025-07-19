@@ -1,0 +1,57 @@
+name: Proxy Changes Trigger
+
+on:
+  push:
+    branches:
+      - cloud-engine-on-release-8.5
+
+jobs:
+  check-proxy-change:
+    name: Check TiFlash Proxy Changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Fetch current and previous commit to compare
+
+      - name: Check if tiflash-proxy submodule changed
+        id: check_proxy
+        run: |
+          # Check if contrib/tiflash-proxy was modified in the current commit
+          if git diff HEAD~1 HEAD --name-only | grep -q "^contrib/tiflash-proxy$"; then
+            echo "proxy_changed=true" >> $GITHUB_OUTPUT
+            echo "TiFlash proxy submodule changed in commit ${{ github.sha }}"
+          else
+            echo "proxy_changed=false" >> $GITHUB_OUTPUT
+            echo "TiFlash proxy submodule not changed in commit ${{ github.sha }}"
+          fi
+
+      - name: Trigger CD workflow
+        if: steps.check_proxy.outputs.proxy_changed == 'true'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: cd.yml
+          ref: ${{ github.ref }}
+          inputs: |
+            {
+              "update_daily_run_image": true,
+              "update_cn_image": true,
+              "auto_merge_update_cn_image": true
+            }
+
+      - name: Log trigger action
+        if: steps.check_proxy.outputs.proxy_changed == 'true'
+        run: |
+          echo "✅ Triggered CD workflow due to TiFlash proxy submodule change"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Triggered with inputs:"
+          echo "  - update_daily_run_image: true"
+          echo "  - update_cn_image: true"
+          echo "  - auto_merge_update_cn_image: true"
+
+      - name: Log no action
+        if: steps.check_proxy.outputs.proxy_changed == 'false'
+        run: |
+          echo "ℹ️ No TiFlash proxy submodule changes detected, skipping CD workflow trigger"
