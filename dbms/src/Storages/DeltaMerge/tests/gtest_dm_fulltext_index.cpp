@@ -653,5 +653,26 @@ try
 }
 CATCH
 
+TEST_P(FullTextIndexSegmentTest1, DataInCFTinyWithLocalIndex)
+try
+{
+    writeSegment(DELTA_MERGE_FIRST_SEGMENT_ID, 5, /* at */ 0);
+    flushSegmentCache(DELTA_MERGE_FIRST_SEGMENT_ID);
+    ensureSegmentDeltaLocalIndex(DELTA_MERGE_FIRST_SEGMENT_ID, indexInfo());
+
+    auto stream = ftsQueryAll(DELTA_MERGE_FIRST_SEGMENT_ID, "100");
+    assertStreamOut(stream, "[0, 0)"); // Empty
+
+    stream = ftsQueryAll(DELTA_MERGE_FIRST_SEGMENT_ID, "word");
+    assertStreamOut(stream, "[0, 5)");
+
+    stream = ftsQueryAll(DELTA_MERGE_FIRST_SEGMENT_ID, "1 2");
+    assertStreamOut(stream, "[1, 3)");
+
+    stream = ftsQueryAll(DELTA_MERGE_FIRST_SEGMENT_ID, "1");
+    assertStreamOut(stream, "[1, 2)");
+}
+CATCH
+
 
 } // namespace DB::DM::tests

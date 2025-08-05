@@ -104,7 +104,7 @@ ColumnFileTinyPtr ColumnFileTinyLocalIndexWriter::buildIndexForFile(
         // Just skip if the index is already built
         if (file->hasIndex(index_info.index_id))
             continue;
-        RUNTIME_CHECK(index_info.def_vector_index != nullptr);
+        RUNTIME_CHECK(index_info.def_vector_index != nullptr || index_info.def_fulltext_index != nullptr);
         index_builders[index_info.column_id].emplace_back(IndexToBuild{
             .info = index_info,
             .index_writer = {},
@@ -178,11 +178,14 @@ ColumnFileTinyPtr ColumnFileTinyLocalIndexWriter::buildIndexForFile(
             RUNTIME_CHECK(index.index_writer);
             auto index_page_id = options.storage_pool->newLogPageId();
             MemoryWriteBuffer write_buf;
-            CompressedWriteBuffer compressed(write_buf);
+
             dtpb::ColumnFileIndexInfo pb_cf_idx;
             pb_cf_idx.set_index_page_id(index_page_id);
-            auto idx_info = index.index_writer->finalize(compressed, [&write_buf] { return write_buf.count(); });
-            pb_cf_idx.mutable_index_props()->Swap(&idx_info);
+            {
+                CompressedWriteBuffer compressed(write_buf);
+                auto idx_info = index.index_writer->finalize(compressed, [&write_buf] { return write_buf.count(); });
+                pb_cf_idx.mutable_index_props()->Swap(&idx_info);
+            }
             auto data_size = write_buf.count();
             auto buf = write_buf.tryGetReadBuffer();
             // ColumnFileDataProviderRNLocalPageCache currently does not support read data withiout fields

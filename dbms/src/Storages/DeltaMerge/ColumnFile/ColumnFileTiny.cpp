@@ -61,6 +61,9 @@ inline void integrityCheckIndexInfoV2(const dtpb::ColumnFileIndexInfo & index_in
     case dtpb::IndexFileKind::VECTOR_INDEX:
         RUNTIME_CHECK(index_info.index_props().has_vector_index());
         break;
+    case dtpb::IndexFileKind::FULLTEXT_INDEX:
+        RUNTIME_CHECK(index_info.index_props().has_fulltext_index());
+        break;
     default:
         RUNTIME_CHECK_MSG(false, "Unsupported index kind: {}", magic_enum::enum_name(index_info.index_props().kind()));
     }
