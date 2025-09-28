@@ -21,7 +21,7 @@ ordered-float = "5.0.0"
 tantivy-tokenizer-api = "0.5.0"
 
 [dependencies.charabia]
-version = "0.9.3"
+version = "0.9.7"
 # Chinese normalization is disabled due to not useful, See https://github.com/meilisearch/charabia/issues/331
 features = ["chinese-segmentation", "hebrew", "japanese", "thai", "korean", "greek", "khmer", "vietnamese", "swedish-recomposition", "turkish", "german-segmentation"]
 default-features = false
