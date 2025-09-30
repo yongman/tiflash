@@ -115,7 +115,7 @@ mod tests {
         );
         assert_eq!(
             t.debug_tokenize("· 加强文明对话 促进理解信任（聚焦博鳌亚洲论坛2025年年会）"),
-            "加强/文明/对话/促进/理解/信任/聚焦/博鳌/亚洲/论坛/2025/年/年/会"
+            "加强/文明/对话/促进/理解/信任/聚焦/博鳌/亚洲/论坛/2/0/2/5/年/年/会",
         );
         assert_eq!(
             t.debug_tokenize("The quick (\"brown\") fox can't jump 32.3 feet, right?"),

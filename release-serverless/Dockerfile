@@ -9,6 +9,7 @@ WORKDIR /root/
 
 ENV HOME /root/
 ENV TZ Asia/Shanghai
+ENV MALLOC_CONF="prof:true"
 
 RUN \
     --mount=type=cache,sharing=locked,target=/var/cache/apt \
@@ -39,7 +40,7 @@ RUN \
     --mount=type=cache,sharing=locked,target=/var/lib/apt <<EOF
 
 # Some debug utilities
-apt-get install -y gdb strace net-tools lsof tcpdump vim
+apt-get install -y gdb strace net-tools lsof tcpdump vim binutils curl wget graphviz
 
 EOF
 
