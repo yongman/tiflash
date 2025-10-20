@@ -50,11 +50,10 @@ public:
     static RNProxyReaderPtr createProxyReader(
         const LoggerPtr & log,
         const Context & context,
-        TableID physical_table_id,
         RegionID region_id,
         RegionVersion region_ver,
         UInt64 region_conf_ver,
-        const pingcap::coprocessor::KeyRanges ranges,
+        const std::vector<std::tuple<TableID, pingcap::coprocessor::KeyRanges>> & partition_table_ranges,
         UInt64 start_ts,
         const TiDBTableScan & table_scan,
         const FilterConditions & filter_conditions,

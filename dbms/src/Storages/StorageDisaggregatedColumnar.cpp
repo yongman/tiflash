@@ -167,24 +167,53 @@ void StorageDisaggregated::filterConditionsWithPushedDownFilters(
 RNProxyReaderPtr RNProxyReader::createProxyReader(
     const LoggerPtr & log,
     const Context & context,
-    TableID physical_table_id,
     RegionID region_id,
     RegionVersion region_ver,
     UInt64 region_conf_ver,
-    const pingcap::coprocessor::KeyRanges ranges,
+    const std::vector<std::tuple<TableID, pingcap::coprocessor::KeyRanges>> & physical_table_ranges,
     UInt64 start_ts,
     const TiDBTableScan & table_scan,
     const FilterConditions & filter_conditions,
     std::mutex & output_lock)
 {
     auto table_scan_pb = table_scan.getTableScanPB();
+    auto table_scan_data = table_scan_pb->SerializeAsString();
+    BaseBuffView table_scan_view = BaseBuffView{table_scan_data.data(), table_scan_data.size()};
     auto conditions = filter_conditions.conditions;
     // Copy pushed down filters to filter_conditions to make filterConditions works properly.
     // Proxy columnar reader use pushed down filters to reduce packs load from disk and has no
     // guarantee to filter all useless data, so we rely on the filterConditions to filter data.
+    String tables_range_data;
+    for (const auto & [physical_table_id, ranges] : physical_table_ranges)
+    {
+        tables_range_data.append(reinterpret_cast<const char *>(&physical_table_id), sizeof(physical_table_id));
 
-    bool is_partition_scan = table_scan.isPartitionTableScan();
+        String ranges_data;
+        for (const auto & range : ranges)
+        {
+            tipb::KeyRange range_pb;
+            range_pb.set_low(range.start_key);
+            range_pb.set_high(range.end_key);
+            auto data = range_pb.SerializeAsString();
+            uint32_t len = data.size();
+            ranges_data.append(reinterpret_cast<const char *>(&len), sizeof(len));
+            ranges_data.append(data.data(), data.size());
+        }
+        uint32_t ranges_data_size = ranges_data.size();
+        tables_range_data.append(reinterpret_cast<const char *>(&ranges_data_size), sizeof(ranges_data_size));
+        tables_range_data.append(ranges_data.data(), ranges_data.size());
+    }
+    BaseBuffView tables_range_view = BaseBuffView{tables_range_data.data(), tables_range_data.size()};
+    String filter_conditions_data;
+    for (const auto & condition : conditions)
+    {
+        auto data = condition.SerializeAsString();
+        uint32_t len = data.size();
+        filter_conditions_data.append(reinterpret_cast<const char *>(&len), sizeof(len));
+        filter_conditions_data.append(data.data(), data.size());
+    }
     tipb::TableInfo table_info;
+    bool is_partition_scan = table_scan.isPartitionTableScan();
     if (is_partition_scan)
     {
         for (const auto & column : table_scan_pb->partition_table_scan().columns())
@@ -199,32 +228,9 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
             *table_info.add_columns() = column;
         }
     }
-    table_info.set_table_id(physical_table_id);
     auto table_info_data = table_info.SerializeAsString();
     BaseBuffView columns = BaseBuffView{table_info_data.data(), table_info_data.size()};
-    auto table_scan_data = table_scan_pb->SerializeAsString();
-    BaseBuffView table_scan_view = BaseBuffView{table_scan_data.data(), table_scan_data.size()};
-    String filter_conditions_data;
-    for (const auto & condition : conditions)
-    {
-        auto data = condition.SerializeAsString();
-        uint32_t len = data.size();
-        filter_conditions_data.append(reinterpret_cast<const char *>(&len), sizeof(len));
-        filter_conditions_data.append(data.data(), data.size());
-    }
     BaseBuffView filter_conditions_view = BaseBuffView{filter_conditions_data.data(), filter_conditions_data.size()};
-    String ranges_data;
-    for (const auto & range : ranges)
-    {
-        tipb::KeyRange range_pb;
-        range_pb.set_low(range.start_key);
-        range_pb.set_high(range.end_key);
-        auto data = range_pb.SerializeAsString();
-        uint32_t len = data.size();
-        ranges_data.append(reinterpret_cast<const char *>(&len), sizeof(len));
-        ranges_data.append(data.data(), data.size());
-    }
-    BaseBuffView ranges_view = BaseBuffView{ranges_data.data(), ranges_data.size()};
     auto ann_query_info_pb = table_scan.getANNQueryInfo();
     auto ann_query_info_data = ann_query_info_pb.SerializeAsString();
     BaseBuffView ann_query_info_view = BaseBuffView{ann_query_info_data.data(), ann_query_info_data.size()};
@@ -235,7 +241,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         region_id,
         region_ver,
         start_ts,
-        std::move(ranges_view),
+        std::move(tables_range_view),
         std::move(columns),
         std::move(table_scan_view),
         std::move(filter_conditions_view),
@@ -404,8 +410,9 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
 
     std::vector<RNProxyReadTaskPtr> tasks;
     // Collect all regions in the table scan.
-    std::unordered_map<TableID, std::vector<pingcap::coprocessor::details::LocationKeyRanges>> all_remote_regions;
-    unsigned region_num = 0;
+    std::unordered_map<uint64_t, std::vector<std::tuple<TableID, pingcap::coprocessor::KeyRanges>>>
+        all_remote_regions_by_region;
+    std::unordered_map<uint64_t, pingcap::kv::RegionVerID> region_ver_ids;
 
     std::vector<UInt64> physical_table_ids;
     std::vector<pingcap::coprocessor::KeyRanges> ranges_for_each_physical_table;
@@ -426,25 +433,27 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
         const auto locations = pingcap::coprocessor::details::splitKeyRangesByLocations(region_cache, bo, ranges);
         for (const auto & location : locations)
         {
-            all_remote_regions[physical_table_id].push_back(location);
+            all_remote_regions_by_region[location.location.region.id].push_back(
+                std::make_tuple(physical_table_id, location.ranges));
+            region_ver_ids[location.location.region.id] = location.location.region;
             LOG_DEBUG(
                 log,
                 "buildProxyReadTask, physical_table_id={}, region_ver_id={}",
                 physical_table_id,
                 location.location.region.toString());
-            ++region_num;
         }
     }
-    // TODO: use location.ranges to build reader
-
+    unsigned region_num = all_remote_regions_by_region.size();
+    unsigned physical_table_num = physical_table_ids.size();
     unsigned real_num_streams = std::min(num_streams, region_num);
     // Regions per RNProxyReader, it should be ceil of region_num / real_num_streams.
     // `regions_per_reader` is the ceil of the division, so the concurrency may be less than `real_num_streams`.
     unsigned regions_per_reader = (region_num + real_num_streams - 1) / real_num_streams;
     LOG_INFO(
         log,
-        "region_num={}, num_streams={}, real_num_streams={}, regions_per_reader={}",
+        "region_num={}, table_num={}, num_streams={}, real_num_streams={}, regions_per_reader={}",
         region_num,
+        physical_table_num,
         num_streams,
         real_num_streams,
         regions_per_reader);
@@ -453,55 +462,45 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
     std::mutex output_lock;
     auto thread_manager = newThreadManager();
 
-    for (auto physical_table_id : physical_table_ids)
+    for (const auto & [region_id, physical_table_ranges] : all_remote_regions_by_region)
     {
-        const auto & locations = all_remote_regions[physical_table_id];
-        for (const auto & location : locations)
-        {
-            auto region_id = location.location.region.id;
-            auto region_ver = location.location.region.ver;
-            auto region_conf_ver = location.location.region.conf_ver;
-            auto ranges = location.ranges;
-            thread_manager->schedule(
-                true,
-                "createProxyReader",
-                [log,
-                 &context,
-                 physical_table_id,
-                 region_id,
-                 region_ver,
-                 region_conf_ver,
-                 ranges,
-                 start_ts,
-                 &table_scan,
-                 &filter_conditions,
-                 &output_lock,
-                 &all_readers] {
-                    LOG_INFO(
-                        log,
-                        "create proxy reader, physical_table_id={}, region_id={}, region_ver={}",
-                        physical_table_id,
-                        region_id,
-                        region_ver);
-                    // Create RNProxyReader for each region and init input streams for each region.
-                    auto reader_ptr = RNProxyReader::createProxyReader(
-                        log,
-                        context,
-                        physical_table_id,
-                        region_id,
-                        region_ver,
-                        region_conf_ver,
-                        ranges,
-                        start_ts,
-                        table_scan,
-                        filter_conditions,
-                        output_lock);
-                    {
-                        std::lock_guard lock(output_lock);
-                        all_readers.push_back(reader_ptr);
-                    }
-                });
-        }
+        auto region_ver = region_ver_ids[region_id].ver;
+        auto region_conf_ver = region_ver_ids[region_id].conf_ver;
+        thread_manager->schedule(
+            true,
+            "createProxyReader",
+            [log,
+             &context,
+             region_id,
+             region_ver,
+             region_conf_ver,
+             physical_table_ranges,
+             start_ts,
+             &table_scan,
+             &filter_conditions,
+             &output_lock,
+             &all_readers] {
+                LOG_INFO(
+                    log,
+                    "create proxy reader for tables in region, region_id={}, table_num={}",
+                    region_id,
+                    physical_table_ranges.size());
+                auto reader_ptr = RNProxyReader::createProxyReader(
+                    log,
+                    context,
+                    region_id,
+                    region_ver,
+                    region_conf_ver,
+                    physical_table_ranges,
+                    start_ts,
+                    table_scan,
+                    filter_conditions,
+                    output_lock);
+                {
+                    std::lock_guard lock(output_lock);
+                    all_readers.push_back(reader_ptr);
+                }
+            });
     }
 
     thread_manager->wait();
