@@ -31,6 +31,8 @@ public:
 
     bool transform(Block & block, TableID physical_table_id);
 
+    bool fill(Block & block, TableID physical_table_id);
+
     Block getHeader() const;
 
     size_t totalRows() const { return total_rows; }

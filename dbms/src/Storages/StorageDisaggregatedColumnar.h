@@ -121,7 +121,8 @@ public:
     ~RNProxyInputStream();
 
     String getName() const { return NAME; }
-    Block getHeader() const { return action.getHeader(); }
+    Block getHeader() const { return header; }
+    void setHeader(const Block & header) { this->header = header; }
     Block read(FilterPtr & res_filter, bool return_filter);
 
 protected:
@@ -147,7 +148,9 @@ public:
         , action(options.columns_to_read, options.extra_table_id_index)
         , table_id(options.table_id)
         , executor_id(options.executor_id)
-    {}
+    {
+        setHeader(toEmptyBlock(options.columns_to_read));
+    }
 
     static BlockInputStreamPtr create(const Options & options) { return std::make_shared<RNProxyInputStream>(options); }
 
@@ -158,6 +161,7 @@ private:
     AddExtraTableIDColumnTransformAction action;
     TableID table_id;
     const String & executor_id;
+    Block header;
 
     bool done = false;
 
@@ -189,7 +193,7 @@ public:
         , task(options.task)
         , action(options.columns_to_read, options.extra_table_id_index)
     {
-        setHeader(action.getHeader());
+        setHeader(toEmptyBlock(options.columns_to_read));
     }
 
     static SourceOpPtr create(const Options & options) { return std::make_unique<RNProxySourceOp>(options); }

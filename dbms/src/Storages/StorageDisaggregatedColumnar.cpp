@@ -348,6 +348,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         .columns_to_read = *column_defines,
         .reader = columnar_reader,
         .extra_table_id_index = extra_table_id_index,
+        .table_id = table_scan.getLogicalTableID(),
         .executor_id = table_scan.getTableScanExecutorID(),
     });
     return std::make_shared<RNProxyReader>(input_stream);
@@ -577,7 +578,8 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     if (rows == 0)
         return {};
 
-    Block header = action.getHeader();
+    TableID physical_table_id;
+    Block header = getHeader();
     const ColumnsWithTypeAndName col_type_and_name = header.getColumnsWithTypeAndName();
     // Construct block from proxy column data.
     MutableColumns columns = header.cloneEmptyColumns();
@@ -594,6 +596,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         if (col_id == TiDBPkColumnID)
         {
             RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_handle(reader);
+            physical_table_id = proxy_helper->cloud_storage_engine_interfaces.fn_physical_table_id(reader);
             String col_data_str(col_data.buff.data, col_data.buff.len);
             // Deserialize column data to column
             ReadBufferFromString buf(col_data_str);
@@ -614,6 +617,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         else
         {
             RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_column(reader, col_id);
+            physical_table_id = proxy_helper->cloud_storage_engine_interfaces.fn_physical_table_id(reader);
             String col_data_str(col_data.buff.data, col_data.buff.len);
             // Deserialize column data to column
             ReadBufferFromString buf(col_data_str);
@@ -633,8 +637,15 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
 
     Block block = header.cloneWithColumns(std::move(columns));
     LOG_DEBUG(log, "Read block rows={}, structure={}", block.rows(), block.dumpStructure());
+    if (physical_table_id == -1)
+    {
+        LOG_WARNING(log, "physical_table_id is not set, use table_id {} instead", table_id);
+        physical_table_id = table_id;
+    }
+    // Fill extra table id column.
+    action.fill(block, physical_table_id);
     block.checkNumberOfRows();
-    action.transform(block, table_id);
+
     total_bytes += block.bytes();
     return block;
 }
