@@ -434,14 +434,31 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
         const auto locations = pingcap::coprocessor::details::splitKeyRangesByLocations(region_cache, bo, ranges);
         for (const auto & location : locations)
         {
-            all_remote_regions_by_region[location.location.region.id].push_back(
-                std::make_tuple(physical_table_id, location.ranges));
-            region_ver_ids[location.location.region.id] = location.location.region;
+            // If the region_ver_ids already exists, compare the value with location.location.region.
+            // If the value is not equal, drop cache and retry.
+            const auto & region = location.location.region;
+            if (auto it = region_ver_ids.find(region.id); it != region_ver_ids.end() && it->second != region)
+            {
+                region_cache->dropRegion(it->second);
+                region_cache->dropRegion(region);
+                region_ver_ids.erase(it);
+                LOG_WARNING(
+                    log,
+                    "buildProxyReadTask failed region_id={}, epoch not match {}",
+                    region.id,
+                    region.toString());
+                throw RegionException(
+                    RegionException::UnavailableRegions{region.id},
+                    RegionException::RegionReadStatus::EPOCH_NOT_MATCH,
+                    region.toString().c_str());
+            }
+            all_remote_regions_by_region[region.id].push_back(std::make_tuple(physical_table_id, location.ranges));
+            region_ver_ids[region.id] = region;
             LOG_DEBUG(
                 log,
                 "buildProxyReadTask, physical_table_id={}, region_ver_id={}",
                 physical_table_id,
-                location.location.region.toString());
+                region.toString());
         }
     }
     unsigned region_num = all_remote_regions_by_region.size();
