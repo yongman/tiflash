@@ -27,6 +27,7 @@
 #include <Flash/Coprocessor/GenSchemaAndColumn.h>
 #include <Flash/Coprocessor/InterpreterUtils.h>
 #include <Flash/Coprocessor/RequestUtils.h>
+#include <IO/Buffer/ReadBufferFromMemory.h>
 #include <IO/IOThreadPools.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/SharedContexts/Disagg.h>
@@ -45,6 +46,8 @@
 #include <pingcap/kv/RegionCache.h>
 #include <tipb/executor.pb.h>
 #include <tipb/select.pb.h>
+
+#include <ext/scope_guard.h>
 
 namespace DB
 {
@@ -247,6 +250,15 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         std::move(filter_conditions_view),
         std::move(ann_query_info_view),
         proxy_helper->proxy_ptr);
+    bool reader_transferred = false;
+    SCOPE_EXIT({
+        if (!reader_transferred)
+            RustGcHelper::instance().gcRustPtr(columnar_reader.inner.ptr, columnar_reader.inner.type);
+    });
+    SCOPE_EXIT({
+        if (!reader_transferred && columnar_reader.error_type != ColumnarReaderErrorType::OK)
+            RustGcHelper::instance().gcRustPtr(columnar_reader.error.inner.ptr, columnar_reader.error.inner.type);
+    });
     if (columnar_reader.error_type == ColumnarReaderErrorType::RegionError)
     {
         auto error_msg = String(columnar_reader.error.buff.data, columnar_reader.error.buff.len);
@@ -335,11 +347,6 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         throw Exception("unknown error type", ErrorCodes::COLUMNAR_SNAPSHOT_ERROR);
     }
 
-    if (columnar_reader.error_type != ColumnarReaderErrorType::OK)
-    {
-        RustGcHelper::instance().gcRustPtr(columnar_reader.error.inner.ptr, columnar_reader.error.inner.type);
-    }
-
     // Create input stream.
     auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
     BlockInputStreamPtr input_stream = RNProxyInputStream::create({
@@ -351,6 +358,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         .table_id = table_scan.getLogicalTableID(),
         .executor_id = table_scan.getTableScanExecutorID(),
     });
+    reader_transferred = true;
     return std::make_shared<RNProxyReader>(input_stream);
 }
 
@@ -558,17 +566,28 @@ BlockInputStreams RNProxyReadTask::getInputStreams() const
 // RNProxyInputStream
 RNProxyInputStream::~RNProxyInputStream()
 {
-    LOG_INFO(
-        log,
-        "Finished reading remote snapshot through proxy, rows={} bytes={} read_cost={:.3f}s deserialize_cost={:.3f}s",
-        action.totalRows(),
-        total_bytes,
-        duration_read_sec,
-        duration_deserialize_sec);
-    auto * dag_context = context.getDAGContext();
-    auto scan_context = dag_context->scan_context_map[executor_id];
-    scan_context->user_read_bytes += total_bytes;
-    RustGcHelper::instance().gcRustPtr(reader.inner.ptr, reader.inner.type);
+    SCOPE_EXIT({ RustGcHelper::instance().gcRustPtr(reader.inner.ptr, reader.inner.type); });
+    try
+    {
+        LOG_INFO(
+            log,
+            "Finished reading remote snapshot through proxy, rows={} bytes={} read_cost={:.3f}s "
+            "deserialize_cost={:.3f}s",
+            action.totalRows(),
+            total_bytes,
+            duration_read_sec,
+            duration_deserialize_sec);
+        auto * dag_context = context.getDAGContext();
+        if (auto it = dag_context->scan_context_map.find(executor_id); it != dag_context->scan_context_map.end())
+        {
+            if (it->second)
+                it->second->user_read_bytes += total_bytes;
+        }
+    }
+    catch (...)
+    {
+        // Destructors must not throw.
+    }
 }
 
 Block RNProxyInputStream::read(FilterPtr & res_filter, bool return_filter)
@@ -595,7 +614,7 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     if (rows == 0)
         return {};
 
-    TableID physical_table_id;
+    TableID physical_table_id = -1;
     Block header = getHeader();
     const ColumnsWithTypeAndName col_type_and_name = header.getColumnsWithTypeAndName();
     // Construct block from proxy column data.
@@ -613,10 +632,9 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         if (col_id == TiDBPkColumnID)
         {
             RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_handle(reader);
+            SCOPE_EXIT({ RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type); });
             physical_table_id = proxy_helper->cloud_storage_engine_interfaces.fn_physical_table_id(reader);
-            String col_data_str(col_data.buff.data, col_data.buff.len);
-            // Deserialize column data to column
-            ReadBufferFromString buf(col_data_str);
+            ReadBufferFromMemory buf(col_data.buff.data, static_cast<size_t>(col_data.buff.len));
             auto & col = *columns[i];
             col_type_and_name[i].type->deserializeBinaryBulkWithMultipleStreams(
                 col,
@@ -625,7 +643,6 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
                 -1.0, // avg_value_size_hint set to -1 to indicate Decimal format from proxy
                 true,
                 {});
-            RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type);
         }
         else if (col_id == ExtraTableIDColumnID)
         {
@@ -634,10 +651,9 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
         else
         {
             RustStrWithView col_data = proxy_helper->cloud_storage_engine_interfaces.fn_read_column(reader, col_id);
+            SCOPE_EXIT({ RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type); });
             physical_table_id = proxy_helper->cloud_storage_engine_interfaces.fn_physical_table_id(reader);
-            String col_data_str(col_data.buff.data, col_data.buff.len);
-            // Deserialize column data to column
-            ReadBufferFromString buf(col_data_str);
+            ReadBufferFromMemory buf(col_data.buff.data, static_cast<size_t>(col_data.buff.len));
             auto & col = *columns[i];
             col_type_and_name[i].type->deserializeBinaryBulkWithMultipleStreams(
                 col,
@@ -647,7 +663,6 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
                 true,
                 {});
             LOG_DEBUG(log, "Read column data done, col size={}", col.size());
-            RustGcHelper::instance().gcRustPtr(col_data.inner.ptr, col_data.inner.type);
         }
     }
     duration_deserialize_sec += w.elapsedSecondsFromLastTime();
