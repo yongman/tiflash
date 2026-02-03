@@ -235,8 +235,11 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     BaseBuffView columns = BaseBuffView{table_info_data.data(), table_info_data.size()};
     BaseBuffView filter_conditions_view = BaseBuffView{filter_conditions_data.data(), filter_conditions_data.size()};
     auto ann_query_info_pb = table_scan.getANNQueryInfo();
+    auto fts_query_info_pb = table_scan.getFTSQueryInfo();
     auto ann_query_info_data = ann_query_info_pb.SerializeAsString();
+    auto fts_query_info_data = fts_query_info_pb.SerializeAsString();
     BaseBuffView ann_query_info_view = BaseBuffView{ann_query_info_data.data(), ann_query_info_data.size()};
+    BaseBuffView fts_query_info_view = BaseBuffView{fts_query_info_data.data(), fts_query_info_data.size()};
     const Context & global_ctx = context.getGlobalContext();
     auto * cluster = global_ctx.getTMTContext().getKVCluster();
     const TiFlashRaftProxyHelper * proxy_helper = global_ctx.getTMTContext().getKVStore()->getProxyHelper();
@@ -249,6 +252,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
         std::move(table_scan_view),
         std::move(filter_conditions_view),
         std::move(ann_query_info_view),
+        std::move(fts_query_info_view),
         proxy_helper->proxy_ptr);
     bool reader_transferred = false;
     SCOPE_EXIT({
