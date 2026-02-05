@@ -48,6 +48,7 @@
 #include <tipb/select.pb.h>
 
 #include <ext/scope_guard.h>
+#include <limits>
 
 namespace DB
 {
@@ -615,6 +616,11 @@ Block RNProxyInputStream::readImpl([[maybe_unused]] FilterPtr & res_filter, [[ma
     UInt64 rows = proxy_helper->cloud_storage_engine_interfaces.fn_read_block(reader, batch_size);
     duration_read_sec += w.elapsedSecondsFromLastTime();
     LOG_DEBUG(log, "Read {} rows from proxy", rows);
+    if (rows == std::numeric_limits<UInt64>::max())
+    {
+        LOG_WARNING(log, "Read block from proxy failed");
+        throw Exception("read_block failed in tiflash-proxy", ErrorCodes::LOGICAL_ERROR);
+    }
     if (rows == 0)
         return {};
 
