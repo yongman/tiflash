@@ -38,6 +38,7 @@
 #include <Storages/StorageDisaggregated.h>
 #include <Storages/StorageDisaggregatedColumnar.h>
 #include <Storages/StorageDisaggregatedHelpers.h>
+#include <TiDB/Decode/TypeMapping.h>
 #include <TiDB/Schema/TiDB.h>
 #include <kvproto/kvrpcpb.pb.h>
 #include <pingcap/coprocessor/Client.h>
@@ -57,6 +58,57 @@ namespace ErrorCodes
 extern const int COLUMNAR_SNAPSHOT_ERROR;
 } // namespace ErrorCodes
 
+namespace
+{
+std::vector<std::tuple<UInt64, String, DataTypePtr>> genGeneratedColumnInfosForDisaggregatedRead(
+    const TiDBTableScan & table_scan)
+{
+    std::vector<std::tuple<UInt64, String, DataTypePtr>> generated_column_infos;
+    generated_column_infos.reserve(table_scan.getColumnSize());
+    for (Int32 i = 0; i < table_scan.getColumnSize(); ++i)
+    {
+        const auto & ci = table_scan.getColumns()[i];
+        if (!ci.hasGeneratedColumnFlag())
+            continue;
+        // Disaggregated read behaves like ExchangeReceiver output.
+        generated_column_infos.emplace_back(
+            static_cast<UInt64>(i),
+            genNameForExchangeReceiver(i),
+            getDataTypeByColumnInfoForComputingLayer(ci));
+    }
+    return generated_column_infos;
+}
+
+std::tuple<DM::ColumnDefinesPtr, int> genColumnDefinesForDisaggregatedReadThroughProxy(const TiDBTableScan & table_scan)
+{
+    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
+    bool has_generated_column = false;
+    for (const auto & ci : table_scan.getColumns())
+    {
+        if (ci.hasGeneratedColumnFlag())
+        {
+            has_generated_column = true;
+            break;
+        }
+    }
+    if (!has_generated_column)
+        return {std::move(column_defines), extra_table_id_index};
+
+    auto filtered_column_defines = std::make_shared<DM::ColumnDefines>();
+    filtered_column_defines->reserve(column_defines->size());
+    int filtered_extra_table_id_index = InvalidColumnID;
+    for (Int32 i = 0; i < table_scan.getColumnSize(); ++i)
+    {
+        if (table_scan.getColumns()[i].hasGeneratedColumnFlag())
+            continue;
+        if (i == extra_table_id_index)
+            filtered_extra_table_id_index = static_cast<int>(filtered_column_defines->size());
+        filtered_column_defines->push_back((*column_defines)[i]);
+    }
+    return {std::move(filtered_column_defines), filtered_extra_table_id_index};
+}
+} // namespace
+
 bool StorageDisaggregated::isReadColumnar()
 {
     return context.getSharedContextDisagg()->use_columnar;
@@ -67,6 +119,7 @@ BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context
     DAGPipeline pipeline;
     const UInt64 start_ts = sender_target_mpp_task_id.gather_id.query_id.start_ts;
     auto [remote_table_ranges, region_num] = buildRemoteTableRanges();
+    const auto generated_column_infos = genGeneratedColumnInfosForDisaggregatedRead(table_scan);
     auto read_proxy_tasks = RNProxyReadTask::buildProxyReadTaskWithBackoff(
         log,
         context,
@@ -80,6 +133,8 @@ BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context
         auto streams = task->getInputStreams();
         pipeline.streams.insert(pipeline.streams.end(), streams.begin(), streams.end());
     }
+    // Avoid reading generated columns from proxy, generate placeholders locally.
+    executeGeneratedColumnPlaceholder(generated_column_infos, log, pipeline);
     NamesAndTypes source_columns;
     source_columns.reserve(table_scan.getColumnSize());
     const auto & stream_header = pipeline.firstStream()->getHeader();
@@ -113,7 +168,8 @@ void StorageDisaggregated::readThroughProxy(
         filter_conditions,
         remote_table_ranges,
         num_streams);
-    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
+    const auto generated_column_infos = genGeneratedColumnInfosForDisaggregatedRead(table_scan);
+    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedReadThroughProxy(table_scan);
     for (auto & task : read_proxy_tasks)
     {
         group_builder.addConcurrency(RNProxySourceOp::create({
@@ -125,6 +181,8 @@ void StorageDisaggregated::readThroughProxy(
             .extra_table_id_index = extra_table_id_index,
         }));
     }
+
+    executeGeneratedColumnPlaceholder(exec_context, group_builder, generated_column_infos, log);
 
     NamesAndTypes source_columns;
     auto header = group_builder.getCurrentHeader();
@@ -218,10 +276,23 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     }
     tipb::TableInfo table_info;
     bool is_partition_scan = table_scan.isPartitionTableScan();
+    const auto & tidbColumns = table_scan.getColumns();
     if (is_partition_scan)
     {
         for (const auto & column : table_scan_pb->partition_table_scan().columns())
         {
+            const auto column_id = column.column_id();
+            bool is_generated_column = false;
+            for (const auto & ci : tidbColumns)
+            {
+                if (ci.id == column_id && ci.hasGeneratedColumnFlag())
+                {
+                    is_generated_column = true;
+                    break;
+                }
+            }
+            if (is_generated_column)
+                continue;
             *table_info.add_columns() = column;
         }
     }
@@ -229,6 +300,18 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     {
         for (const auto & column : table_scan_pb->tbl_scan().columns())
         {
+            const auto column_id = column.column_id();
+            bool is_generated_column = false;
+            for (const auto & ci : tidbColumns)
+            {
+                if (ci.id == column_id && ci.hasGeneratedColumnFlag())
+                {
+                    is_generated_column = true;
+                    break;
+                }
+            }
+            if (is_generated_column)
+                continue;
             *table_info.add_columns() = column;
         }
     }
@@ -353,7 +436,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     }
 
     // Create input stream.
-    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedRead(table_scan);
+    auto [column_defines, extra_table_id_index] = genColumnDefinesForDisaggregatedReadThroughProxy(table_scan);
     BlockInputStreamPtr input_stream = RNProxyInputStream::create({
         .context = context,
         .debug_tag = log->identifier(),
