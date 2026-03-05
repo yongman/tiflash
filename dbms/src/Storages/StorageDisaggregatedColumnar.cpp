@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <Common/Exception.h>
+#include <Common/MyTime.h>
 #include <Common/Stopwatch.h>
 #include <Common/ThreadManager.h>
 #include <Core/NamesAndTypes.h>
@@ -23,6 +24,7 @@
 #include <Flash/Coprocessor/DAGExpressionAnalyzer.h>
 #include <Flash/Coprocessor/DAGPipeline.h>
 #include <Flash/Coprocessor/DAGQueryInfo.h>
+#include <Flash/Coprocessor/DAGUtils.h>
 #include <Flash/Coprocessor/FilterConditions.h>
 #include <Flash/Coprocessor/GenSchemaAndColumn.h>
 #include <Flash/Coprocessor/InterpreterUtils.h>
@@ -40,6 +42,7 @@
 #include <Storages/StorageDisaggregatedHelpers.h>
 #include <TiDB/Decode/TypeMapping.h>
 #include <TiDB/Schema/TiDB.h>
+#include <common/DateLUT.h>
 #include <kvproto/kvrpcpb.pb.h>
 #include <pingcap/coprocessor/Client.h>
 #include <pingcap/kv/Backoff.h>
@@ -107,6 +110,56 @@ std::tuple<DM::ColumnDefinesPtr, int> genColumnDefinesForDisaggregatedReadThroug
     }
     return {std::move(filtered_column_defines), filtered_extra_table_id_index};
 }
+
+void normalizeTimestampCompareDateTimeLiteralToUTC(tipb::Expr & expr, const TimezoneInfo & timezone_info)
+{
+    if (!isFunctionExpr(expr))
+        return;
+
+    bool has_timestamp_column = false;
+    bool only_column_or_literal = true;
+    size_t column_ref_count = 0;
+    for (const auto & child : expr.children())
+    {
+        if (isColumnExpr(child))
+        {
+            ++column_ref_count;
+            has_timestamp_column
+                = has_timestamp_column || (child.has_field_type() && child.field_type().tp() == TiDB::TypeTimestamp);
+        }
+        else if (!isLiteralExpr(child))
+        {
+            only_column_or_literal = false;
+        }
+    }
+
+    // Proxy filter parser only supports simple column-literal expressions.
+    // If a timestamp column is compared with a datetime literal, normalize the
+    // datetime literal from session timezone to UTC before passing to proxy.
+    if (has_timestamp_column && only_column_or_literal && column_ref_count == 1 && !timezone_info.is_utc_timezone)
+    {
+        static const auto & time_zone_utc = DateLUT::instance("UTC");
+        for (int i = 0; i < expr.children_size(); ++i)
+        {
+            auto * child = expr.mutable_children(i);
+            if (!isLiteralExpr(*child) || !child->has_field_type())
+                continue;
+            if (child->tp() != tipb::ExprType::MysqlTime || child->field_type().tp() != TiDB::TypeDatetime)
+                continue;
+
+            UInt64 from_time = decodeLiteral(*child).get<UInt64>();
+            UInt64 result_time = from_time;
+            if (timezone_info.is_name_based)
+                convertTimeZone(from_time, result_time, *timezone_info.timezone, time_zone_utc);
+            else if (timezone_info.timezone_offset != 0)
+                convertTimeZoneByOffset(from_time, result_time, false, timezone_info.timezone_offset);
+            child->set_val(constructDateTimeLiteralTiExpr(result_time).val());
+        }
+    }
+
+    for (int i = 0; i < expr.children_size(); ++i)
+        normalizeTimestampCompareDateTimeLiteralToUTC(*expr.mutable_children(i), timezone_info);
+}
 } // namespace
 
 bool StorageDisaggregated::isReadColumnar()
@@ -144,8 +197,10 @@ BlockInputStreams StorageDisaggregated::readThroughProxy(const Context & context
     }
     analyzer = std::make_unique<DAGExpressionAnalyzer>(std::move(source_columns), context);
 
-    // Handle duration type column
-    extraCast(*analyzer, pipeline);
+    // Handle duration/timestamp cast for proxy path.
+    // We still execute pushed-down filters on RN side, so timestamp columns in those filters
+    // must also be converted from UTC to session timezone.
+    extraCast(*analyzer, pipeline, /*skip_pushed_down_filter_columns=*/false);
     // Handle filter
     filterConditionsWithPushedDownFilters(*analyzer, pipeline);
     return pipeline.streams;
@@ -191,8 +246,8 @@ void StorageDisaggregated::readThroughProxy(
         source_columns.emplace_back(col.name, col.type);
     analyzer = std::make_unique<DAGExpressionAnalyzer>(std::move(source_columns), context);
 
-    // Handle duration type column
-    extraCast(exec_context, group_builder, *analyzer);
+    // Handle duration/timestamp cast for proxy path.
+    extraCast(exec_context, group_builder, *analyzer, /*skip_pushed_down_filter_columns=*/false);
     // Handle filter
     filterConditionsWithPushedDownFilters(exec_context, group_builder, *analyzer);
 }
@@ -238,10 +293,26 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     const FilterConditions & filter_conditions,
     std::mutex & output_lock)
 {
-    auto table_scan_pb = table_scan.getTableScanPB();
-    auto table_scan_data = table_scan_pb->SerializeAsString();
+    auto table_scan_pb = *table_scan.getTableScanPB();
+    const auto & timezone_info = context.getTimezoneInfo();
+    if (table_scan_pb.tp() == tipb::TypePartitionTableScan)
+    {
+        auto * pushed_down_filters
+            = table_scan_pb.mutable_partition_table_scan()->mutable_pushed_down_filter_conditions();
+        for (int i = 0; i < pushed_down_filters->size(); ++i)
+            normalizeTimestampCompareDateTimeLiteralToUTC(*pushed_down_filters->Mutable(i), timezone_info);
+    }
+    else
+    {
+        auto * pushed_down_filters = table_scan_pb.mutable_tbl_scan()->mutable_pushed_down_filter_conditions();
+        for (int i = 0; i < pushed_down_filters->size(); ++i)
+            normalizeTimestampCompareDateTimeLiteralToUTC(*pushed_down_filters->Mutable(i), timezone_info);
+    }
+    auto table_scan_data = table_scan_pb.SerializeAsString();
     BaseBuffView table_scan_view = BaseBuffView{table_scan_data.data(), table_scan_data.size()};
     auto conditions = filter_conditions.conditions;
+    for (int i = 0; i < conditions.size(); ++i)
+        normalizeTimestampCompareDateTimeLiteralToUTC(*conditions.Mutable(i), timezone_info);
     // Copy pushed down filters to filter_conditions to make filterConditions works properly.
     // Proxy columnar reader use pushed down filters to reduce packs load from disk and has no
     // guarantee to filter all useless data, so we rely on the filterConditions to filter data.
@@ -279,7 +350,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     const auto & tidbColumns = table_scan.getColumns();
     if (is_partition_scan)
     {
-        for (const auto & column : table_scan_pb->partition_table_scan().columns())
+        for (const auto & column : table_scan_pb.partition_table_scan().columns())
         {
             const auto column_id = column.column_id();
             bool is_generated_column = false;
@@ -298,7 +369,7 @@ RNProxyReaderPtr RNProxyReader::createProxyReader(
     }
     else
     {
-        for (const auto & column : table_scan_pb->tbl_scan().columns())
+        for (const auto & column : table_scan_pb.tbl_scan().columns())
         {
             const auto column_id = column.column_id();
             bool is_generated_column = false;

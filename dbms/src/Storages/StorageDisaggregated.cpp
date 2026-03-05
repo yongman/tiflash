@@ -184,15 +184,18 @@ void StorageDisaggregated::filterConditions(
     }
 }
 
-ExpressionActionsPtr StorageDisaggregated::getExtraCastExpr(DAGExpressionAnalyzer & analyzer)
+ExpressionActionsPtr StorageDisaggregated::getExtraCastExpr(
+    DAGExpressionAnalyzer & analyzer,
+    bool skip_pushed_down_filter_columns)
 {
     // If the column is not in the columns of pushed down filter, append a cast to the column.
     std::vector<UInt8> may_need_add_cast_column;
     may_need_add_cast_column.reserve(table_scan.getColumnSize());
     std::unordered_set<ColumnID> filter_col_id_set;
-    for (const auto & expr : table_scan.getPushedDownFilters())
+    if (skip_pushed_down_filter_columns)
     {
-        getColumnIDsFromExpr(expr, table_scan.getColumns(), filter_col_id_set);
+        for (const auto & expr : table_scan.getPushedDownFilters())
+            getColumnIDsFromExpr(expr, table_scan.getColumns(), filter_col_id_set);
     }
     for (const auto & col : table_scan.getColumns())
         may_need_add_cast_column.push_back(
@@ -213,9 +216,12 @@ ExpressionActionsPtr StorageDisaggregated::getExtraCastExpr(DAGExpressionAnalyze
     }
 }
 
-void StorageDisaggregated::extraCast(DAGExpressionAnalyzer & analyzer, DAGPipeline & pipeline)
+void StorageDisaggregated::extraCast(
+    DAGExpressionAnalyzer & analyzer,
+    DAGPipeline & pipeline,
+    bool skip_pushed_down_filter_columns)
 {
-    if (auto extra_cast = getExtraCastExpr(analyzer); extra_cast)
+    if (auto extra_cast = getExtraCastExpr(analyzer, skip_pushed_down_filter_columns); extra_cast)
     {
         pipeline.transform([&](auto & stream) {
             stream = std::make_shared<ExpressionBlockInputStream>(stream, extra_cast, log->identifier());
@@ -227,9 +233,10 @@ void StorageDisaggregated::extraCast(DAGExpressionAnalyzer & analyzer, DAGPipeli
 void StorageDisaggregated::extraCast(
     PipelineExecutorContext & exec_context,
     PipelineExecGroupBuilder & group_builder,
-    DAGExpressionAnalyzer & analyzer)
+    DAGExpressionAnalyzer & analyzer,
+    bool skip_pushed_down_filter_columns)
 {
-    if (auto extra_cast = getExtraCastExpr(analyzer); extra_cast)
+    if (auto extra_cast = getExtraCastExpr(analyzer, skip_pushed_down_filter_columns); extra_cast)
     {
         group_builder.transform([&](auto & builder) {
             builder.appendTransformOp(

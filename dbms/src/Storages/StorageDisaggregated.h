@@ -149,12 +149,18 @@ private:
         PipelineExecutorContext & exec_context,
         PipelineExecGroupBuilder & group_builder,
         DAGExpressionAnalyzer & analyzer);
-    ExpressionActionsPtr getExtraCastExpr(DAGExpressionAnalyzer & analyzer);
-    void extraCast(DAGExpressionAnalyzer & analyzer, DAGPipeline & pipeline);
+    ExpressionActionsPtr getExtraCastExpr(
+        DAGExpressionAnalyzer & analyzer,
+        bool skip_pushed_down_filter_columns = true);
+    void extraCast(
+        DAGExpressionAnalyzer & analyzer,
+        DAGPipeline & pipeline,
+        bool skip_pushed_down_filter_columns = true);
     void extraCast(
         PipelineExecutorContext & exec_context,
         PipelineExecGroupBuilder & group_builder,
-        DAGExpressionAnalyzer & analyzer);
+        DAGExpressionAnalyzer & analyzer,
+        bool skip_pushed_down_filter_columns = true);
     tipb::Executor buildTableScanTiPB();
 
     size_t getBuildTaskRPCTimeout() const;
