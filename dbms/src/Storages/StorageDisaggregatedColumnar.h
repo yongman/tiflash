@@ -174,7 +174,7 @@ private:
 
     double duration_deserialize_sec = 0;
     double duration_read_sec = 0;
-    UInt64 batch_size = 10240;
+    UInt64 batch_size = 65536;
     UInt64 total_bytes = 0;
 };
 
