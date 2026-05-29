@@ -664,19 +664,21 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
     }
     unsigned region_num = all_remote_regions_by_region.size();
     unsigned physical_table_num = physical_table_ids.size();
+    if (region_num == 0)
+        return tasks;
+
     unsigned real_num_streams = std::min(num_streams, region_num);
-    // Regions per RNProxyReader, it should be ceil of region_num / real_num_streams.
-    // `regions_per_reader` is the ceil of the division, so the concurrency may be less than `real_num_streams`.
-    unsigned regions_per_reader = (region_num + real_num_streams - 1) / real_num_streams;
+    unsigned regions_per_reader = region_num / real_num_streams;
+    unsigned extra_regions = region_num % real_num_streams;
     LOG_INFO(
         log,
-        "region_num={}, table_num={}, num_streams={}, real_num_streams={}, regions_per_reader={}",
+        "region_num={}, table_num={}, num_streams={}, real_num_streams={}, base_regions_per_reader={}, extra_regions={}",
         region_num,
         physical_table_num,
         num_streams,
         real_num_streams,
-        regions_per_reader);
-    unsigned reader_idx = 0;
+        regions_per_reader,
+        extra_regions);
     std::vector<RNProxyReaderPtr> all_readers;
     std::mutex output_lock;
     auto thread_manager = newThreadManager();
@@ -723,22 +725,19 @@ std::vector<RNProxyReadTaskPtr> RNProxyReadTask::buildProxyReadTask(
     }
 
     thread_manager->wait();
+    RUNTIME_CHECK(all_readers.size() == region_num);
 
-    std::vector<RNProxyReaderPtr> readers;
-    for (auto & reader : all_readers)
+    auto reader_iter = all_readers.begin();
+    tasks.reserve(real_num_streams);
+    for (unsigned stream_idx = 0; stream_idx < real_num_streams; ++stream_idx)
     {
-        ++reader_idx;
-        readers.push_back(reader);
-        if (reader_idx == regions_per_reader)
+        unsigned reader_num = regions_per_reader + (stream_idx < extra_regions ? 1 : 0);
+        std::vector<RNProxyReaderPtr> readers;
+        readers.reserve(reader_num);
+        for (unsigned i = 0; i < reader_num; ++i)
         {
-            reader_idx = 0;
-            tasks.push_back(std::make_shared<RNProxyReadTask>(std::move(readers)));
-            readers.clear();
+            readers.push_back(*reader_iter++);
         }
-    }
-
-    if (!readers.empty())
-    {
         tasks.push_back(std::make_shared<RNProxyReadTask>(std::move(readers)));
     }
 
