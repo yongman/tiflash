@@ -2,6 +2,8 @@ SHELL := bash
 ENABLE_FEATURES ?=
 PROJECT_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 UNAME_S := $(shell uname -s)
+CARGO_GLOBAL_ARGS ?=
+CARGO_BUILD_ARGS ?=
 
 # Build-time environment, captured for reporting by the application binary.
 BUILD_INFO_GIT_FALLBACK := "Unknown (no git or not git repo)"
@@ -17,7 +19,9 @@ export PROXY_PROFILE ?= debug
 # linker to coalesce them in the columnar hub build instead of vendoring
 # another patched `usearch` copy locally.
 ifneq ($(UNAME_S),Darwin)
+ifeq ($(strip $(TIFLASH_USE_CARGO_HOST_TARGET_CONFIG)),)
 export RUSTFLAGS := $(RUSTFLAGS) -C link-arg=-Wl,--allow-multiple-definition
+endif
 endif
 
 FEATURE_ARGS :=
@@ -28,15 +32,15 @@ endif
 .PHONY: debug release build clean
 
 build:
-	cargo build --locked --manifest-path hub-runtime/Cargo.toml $(PROFILE_FLAG) $(FEATURE_ARGS)
+	cargo $(CARGO_GLOBAL_ARGS) build --locked --manifest-path hub-runtime/Cargo.toml $(PROFILE_FLAG) $(CARGO_BUILD_ARGS) $(FEATURE_ARGS)
 
 debug: export PROXY_PROFILE=debug
 debug:
-	cargo build --locked --manifest-path hub-runtime/Cargo.toml $(FEATURE_ARGS)
+	cargo $(CARGO_GLOBAL_ARGS) build --locked --manifest-path hub-runtime/Cargo.toml $(CARGO_BUILD_ARGS) $(FEATURE_ARGS)
 
 release: export PROXY_PROFILE=release
 release:
-	cargo build --locked --manifest-path hub-runtime/Cargo.toml --release $(FEATURE_ARGS)
+	cargo $(CARGO_GLOBAL_ARGS) build --locked --manifest-path hub-runtime/Cargo.toml --release $(CARGO_BUILD_ARGS) $(FEATURE_ARGS)
 
 clean:
-	cargo clean --manifest-path hub-runtime/Cargo.toml
+	cargo $(CARGO_GLOBAL_ARGS) clean --manifest-path hub-runtime/Cargo.toml $(CARGO_BUILD_ARGS)
