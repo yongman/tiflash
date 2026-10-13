@@ -208,8 +208,11 @@ void ResourceControlQueue<NestedTaskQueueType>::updateStatistics(
     const auto & keyspace_id = task->getKeyspaceID();
     if (keyspace_cpu_limiter && keyspace_cpu_limiter->isEnabled())
     {
+        // release() wakes limiter waiters when this keyspace can admit again.
+        // A completion never makes a queued task takeable (only submit() adds
+        // work), so we must not broadcast the queue's condition variable and
+        // storm the idle pool threads on every task round.
         keyspace_cpu_limiter->release(task.get());
-        notifyWaiters();
     }
     LocalAdmissionController::global_instance->consumeCPUResource(keyspace_id, resource_group_name, ru, inc_value);
 
@@ -346,7 +349,7 @@ void ResourceControlQueue<NestedTaskQueueType>::notifyOneWaiter()
 {
     cv.notify_one();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 
 template <typename NestedTaskQueueType>
@@ -354,7 +357,7 @@ void ResourceControlQueue<NestedTaskQueueType>::notifyWaiters()
 {
     cv.notify_all();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 
 template class ResourceControlQueue<CPUMultiLevelFeedbackQueue>;

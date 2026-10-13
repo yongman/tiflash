@@ -18,6 +18,7 @@
 #include <Storages/KVStore/Types.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -51,21 +52,28 @@ public:
     {
         if (isEnabled())
             cleanup_thread = std::thread([this] {
-                std::unique_lock lock(mu);
+                // Use a private lock so the periodic cleanup never contends with
+                // the scheduling hot path that holds `mu`.
+                std::unique_lock lock(cleanup_mu);
                 while (!cleanup_cv.wait_for(lock, std::chrono::minutes(1), [this] { return stopping; }))
-                    cleanupIdleQuotasWithoutLock(std::chrono::steady_clock::now());
+                {
+                    lock.unlock();
+                    cleanupIdleQuotas(std::chrono::steady_clock::now());
+                    lock.lock();
+                }
             });
     }
 
     ~KeyspaceCpuLimiter()
     {
         {
-            std::lock_guard lock(mu);
+            std::lock_guard lock(cleanup_mu);
             stopping = true;
         }
         cleanup_cv.notify_all();
         if (cleanup_thread.joinable())
             cleanup_thread.join();
+        std::lock_guard lock(mu);
         for (const auto & entry : cpu_quotas)
             TiFlashMetrics::instance().releaseKeyspaceCpuLimiterMetrics(entry.first);
     }
@@ -95,6 +103,9 @@ public:
             {
                 if (cpu_quota_rejected)
                     *cpu_quota_rejected = true;
+                // Remember that a waiter may be parked on this keyspace so the
+                // next release that makes it admittable wakes it.
+                quota.waiter_blocked = true;
                 quota.metrics->cpu_quota_throttled_total->Increment();
                 updateMetricsWithoutLock(keyspace_id, quota);
                 return false;
@@ -104,6 +115,7 @@ public:
         auto & active = active_tasks[keyspace_id];
         if (max_active_tasks != 0 && active >= max_active_tasks)
         {
+            quota.waiter_blocked = true;
             quota.metrics->active_tasks_throttled_total->Increment();
             updateMetricsWithoutLock(keyspace_id, quota);
             return false;
@@ -216,15 +228,17 @@ public:
         const auto keyspace_id = owner_iter->second;
         active_owners.erase(owner_iter);
         releaseWithoutLock(keyspace_id);
-        {
-            auto & quota = getCPUQuotaWithoutLock(keyspace_id);
-            quota.last_activity = std::chrono::steady_clock::now();
-            if (cpu_quota_per_second_ns != 0)
-                refillCPUQuotaWithoutLock(quota);
-            updateMetricsWithoutLock(keyspace_id, quota);
-        }
-        ++change_id;
-        cv.notify_all();
+        auto & quota = getCPUQuotaWithoutLock(keyspace_id);
+        quota.last_activity = std::chrono::steady_clock::now();
+        if (cpu_quota_per_second_ns != 0)
+            refillCPUQuotaWithoutLock(quota);
+        // Only wake a waiter when the release actually moved the keyspace from
+        // "cannot admit" to "can admit". Waking on every release (as before)
+        // floods all pool threads and wastes CPU on a busy keyspace.
+        const bool woken = shouldWakeWaiter(keyspace_id, quota);
+        updateMetricsWithoutLock(keyspace_id, quota);
+        if (woken)
+            wakeWaiters();
     }
 
     // Kept for direct limiter tests and callers that do not have a task owner.
@@ -239,16 +253,38 @@ public:
         releaseWithoutLock(keyspace_id);
         auto & quota = getCPUQuotaWithoutLock(keyspace_id);
         quota.last_activity = std::chrono::steady_clock::now();
+        const bool woken = shouldWakeWaiter(keyspace_id, quota);
         updateMetricsWithoutLock(keyspace_id, quota);
-        ++change_id;
-        cv.notify_all();
+        if (woken)
+            wakeWaiters();
     }
 
     /// Return a generation that changes whenever a waiter may make progress.
-    UInt64 getChangeId() const
+    /// Lock free so the waiter path does not contend on `mu` on every loop.
+    UInt64 getChangeId() const { return change_id.load(std::memory_order_acquire); }
+
+    /// Bump the generation and wake waiters.
+    ///
+    /// Called when a task becomes available (submit/cancel/finish) and by
+    /// `release()` when a keyspace can admit a waiter again. The generation is
+    /// bumped under `waiter_mu` so it cannot slip between a waiter re-checking
+    /// its predicate and blocking; `getChangeId()` stays lock free because the
+    /// generation is atomic.
+    void wakeWaiters()
     {
-        std::lock_guard lock(mu);
-        return change_id;
+        if (!isEnabled())
+            return;
+        bool has_waiters = false;
+        {
+            std::lock_guard lock(waiter_mu);
+            change_id.fetch_add(1, std::memory_order_acq_rel);
+            has_waiters = waiter_count != 0;
+        }
+        // Skipping the broadcast when nobody is parked turns the common
+        // submit/release path (which runs once per task round) into a cheap
+        // lock-and-return instead of a futex wake.
+        if (has_waiters)
+            cv.notify_all();
     }
 
     /// Wait for a release or a queue submission notification. The generation
@@ -258,8 +294,12 @@ public:
         if (!isEnabled())
             return;
 
-        std::unique_lock lock(mu);
-        cv.wait(lock, [&] { return change_id != previous_change_id; });
+        std::unique_lock lock(waiter_mu);
+        ++waiter_count;
+        cv.wait(
+            lock,
+            [&] { return change_id.load(std::memory_order_acquire) != previous_change_id; });
+        --waiter_count;
     }
 
     bool waitForChange(UInt64 previous_change_id, std::chrono::milliseconds timeout)
@@ -267,26 +307,41 @@ public:
         if (!isEnabled())
             return true;
 
-        std::unique_lock lock(mu);
+        std::unique_lock lock(waiter_mu);
+        ++waiter_count;
+        bool changed = true;
         if (timeout == std::chrono::milliseconds::max())
         {
-            cv.wait(lock, [&] { return change_id != previous_change_id; });
-            return true;
+            cv.wait(
+                lock,
+                [&] { return change_id.load(std::memory_order_acquire) != previous_change_id; });
         }
-        return cv.wait_for(lock, timeout, [&] { return change_id != previous_change_id; });
-    }
-
-    void notifyAll()
-    {
-        if (!isEnabled())
-            return;
-
-        std::lock_guard lock(mu);
-        ++change_id;
-        cv.notify_all();
+        else
+        {
+            changed = cv.wait_for(
+                lock,
+                timeout,
+                [&] { return change_id.load(std::memory_order_acquire) != previous_change_id; });
+        }
+        --waiter_count;
+        return changed;
     }
 
 private:
+    /// Per-keyspace token bucket state. Declared before the methods that take
+    /// it as a parameter, since a member function's parameter list is not part
+    /// of the complete-class context.
+    struct CPUQuota
+    {
+        double tokens_ns = 0;
+        std::chrono::steady_clock::time_point last_refill;
+        std::chrono::steady_clock::time_point last_activity;
+        TiFlashMetrics::KeyspaceCpuLimiterMetrics * metrics = nullptr;
+        /// Set when a waiter is rejected for this keyspace, cleared when a
+        /// release wakes it. Gates the release-driven broadcast.
+        bool waiter_blocked = false;
+    };
+
     void releaseWithoutLock(KeyspaceID keyspace_id)
     {
         auto iter = active_tasks.find(keyspace_id);
@@ -298,6 +353,34 @@ private:
             active_tasks.erase(iter);
     }
 
+    /// Whether a just-released keyspace can now admit a waiter that was
+    /// previously rejected.
+    ///
+    /// A broadcast is only useful when some thread actually observed this
+    /// keyspace as non-admittable (it set `waiter_blocked` on rejection) and
+    /// the release made it admittable again. Waking on every release would
+    /// flood all pool threads even when the keyspace was never throttled, which
+    /// is the common case. The flag is cleared here so a single rejection does
+    /// not turn every later release into a broadcast. Must be called with `mu`
+    /// held.
+    bool shouldWakeWaiter(KeyspaceID keyspace_id, CPUQuota & quota)
+    {
+        if (!quota.waiter_blocked)
+            return false;
+        const bool cpu_admittable = cpu_quota_per_second_ns == 0 || quota.tokens_ns > 0;
+        const bool pool_admittable = max_active_tasks == 0 || getActiveWithoutLock(keyspace_id) < max_active_tasks;
+        if (!cpu_admittable || !pool_admittable)
+            return false;
+        quota.waiter_blocked = false;
+        return true;
+    }
+
+    size_t getActiveWithoutLock(KeyspaceID keyspace_id) const
+    {
+        const auto iter = active_tasks.find(keyspace_id);
+        return iter == active_tasks.end() ? 0 : iter->second;
+    }
+
 private:
     const size_t max_active_tasks;
     const UInt64 cpu_quota_per_second_ns;
@@ -305,18 +388,16 @@ private:
     /// Upper bound on a refill wait, so a waiter still re-checks occasionally.
     static constexpr std::chrono::milliseconds max_refill_wait{1000};
     mutable std::mutex mu;
+    /// Separate lock for the waiter condition variable so broadcasts and
+    /// getChangeId() do not contend with the accounting in `mu`.
+    mutable std::mutex waiter_mu;
     std::condition_variable cv;
-    UInt64 change_id = 0;
+    std::atomic<UInt64> change_id{0};
+    /// Number of threads currently parked on `cv`, guarded by `waiter_mu`.
+    /// Lets `wakeWaiters()` skip the broadcast when there is nobody to wake.
+    size_t waiter_count = 0;
     std::unordered_map<KeyspaceID, size_t> active_tasks;
     std::unordered_map<const Task *, KeyspaceID> active_owners;
-
-    struct CPUQuota
-    {
-        double tokens_ns = 0;
-        std::chrono::steady_clock::time_point last_refill;
-        std::chrono::steady_clock::time_point last_activity;
-        TiFlashMetrics::KeyspaceCpuLimiterMetrics * metrics = nullptr;
-    };
 
     CPUQuota & getCPUQuotaWithoutLock(KeyspaceID keyspace_id)
     {
@@ -328,6 +409,8 @@ private:
             quota.last_refill = std::chrono::steady_clock::now();
             quota.last_activity = quota.last_refill;
             quota.metrics = &TiFlashMetrics::instance().acquireKeyspaceCpuLimiterMetrics(keyspace_id);
+            quota.metrics->max_active_tasks->Set(max_active_tasks);
+            quota.metrics->cpu_quota_seconds_per_second->Set(cpu_quota_per_second_ns / 1'000'000'000.0);
         }
         return quota;
     }
@@ -350,12 +433,12 @@ private:
 
     void updateMetricsWithoutLock(KeyspaceID keyspace_id, CPUQuota & quota)
     {
-        const auto active_iter = active_tasks.find(keyspace_id);
-        const auto active = active_iter == active_tasks.end() ? 0 : active_iter->second;
+        // `max_active_tasks` and `cpu_quota_seconds_per_second` are constant for
+        // the lifetime of the limiter, so they are published once when the quota
+        // is created instead of on every hot-path update.
+        const auto active = getActiveWithoutLock(keyspace_id);
         quota.metrics->active_tasks->Set(active);
-        quota.metrics->max_active_tasks->Set(max_active_tasks);
         quota.metrics->cpu_tokens_seconds->Set(quota.tokens_ns / 1'000'000'000.0);
-        quota.metrics->cpu_quota_seconds_per_second->Set(cpu_quota_per_second_ns / 1'000'000'000.0);
         quota.metrics->throttled->Set(
             (cpu_quota_per_second_ns != 0 && quota.tokens_ns <= 0)
                     || (max_active_tasks != 0 && active >= max_active_tasks)
@@ -364,6 +447,7 @@ private:
     }
 
     std::unordered_map<KeyspaceID, CPUQuota> cpu_quotas;
+    std::mutex cleanup_mu;
     std::condition_variable cleanup_cv;
     bool stopping = false;
     std::thread cleanup_thread;

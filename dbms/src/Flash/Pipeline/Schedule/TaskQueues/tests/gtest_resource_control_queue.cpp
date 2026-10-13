@@ -21,7 +21,9 @@
 #include <Flash/ResourceControl/MockLocalAdmissionController.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <random>
+#include <thread>
 #include <vector>
 
 namespace DB::tests
@@ -160,6 +162,50 @@ TEST(KeyspaceCpuLimiterTest, MetricsAreRemovedAfterLastLimiter)
     EXPECT_EQ(metrics.active_tasks_throttled_total->Value(), 0);
     EXPECT_EQ(metrics.max_active_tasks->Value(), 0);
     registry.releaseKeyspaceCpuLimiterMetrics(keyspace_id);
+}
+
+TEST(KeyspaceCpuLimiterTest, ReleaseWakesWaiterWhenKeyspaceAdmits)
+{
+    constexpr KeyspaceID keyspace_id = 999994;
+    KeyspaceCpuLimiter limiter(1);
+    const Task * task = nullptr;
+
+    ASSERT_TRUE(limiter.tryAcquire(keyspace_id));
+    limiter.bindOwner(keyspace_id, task);
+    ASSERT_FALSE(limiter.tryAcquire(keyspace_id));
+
+    const auto previous_change_id = limiter.getChangeId();
+    std::atomic<bool> woken{false};
+    std::thread waiter([&] {
+        limiter.waitForChange(previous_change_id);
+        woken = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Releasing the only reservation must let the parked waiter make progress.
+    limiter.release(task);
+    waiter.join();
+
+    EXPECT_TRUE(woken.load());
+    EXPECT_TRUE(limiter.tryAcquire(keyspace_id));
+}
+
+TEST(KeyspaceCpuLimiterTest, WakeWaitersUnblocksWaiter)
+{
+    KeyspaceCpuLimiter limiter(1);
+    const auto previous_change_id = limiter.getChangeId();
+    std::atomic<bool> woken{false};
+    std::thread waiter([&] {
+        limiter.waitForChange(previous_change_id);
+        woken = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Task queues call wakeWaiters() when work becomes available.
+    limiter.wakeWaiters();
+    waiter.join();
+
+    EXPECT_TRUE(woken.load());
 }
 
 class SimpleTask : public Task
@@ -929,6 +975,114 @@ TEST_F(TestResourceControlQueue, parseEtcdKey)
         ASSERT_EQ(name, "");
         ASSERT_TRUE(err_msg.contains("parse keyspace fail"));
     }
+}
+
+TEST_F(TestResourceControlQueue, keyspaceCpuLimiterDrainsSingleKeyspace)
+{
+    // A per-keyspace pool limit serializes admission. Every task must still be
+    // taken and finalized, i.e. a released reservation always lets the next
+    // take() through instead of stranding the queue.
+    constexpr size_t max_active_tasks = 2;
+    constexpr KeyspaceID keyspace_id = 424242;
+    const String resource_group_name = "ks-rg";
+    setupMockLAC({createResourceGroupOfStaticTokenBucket(
+        resource_group_name,
+        ResourceGroup::UserMediumPriority,
+        20000,
+        false)});
+
+    const String query_id = "ks-query";
+    auto context = std::make_shared<PipelineExecutorContext>(
+        query_id,
+        query_id,
+        mem_tracker,
+        nullptr,
+        nullptr,
+        nullptr,
+        keyspace_id,
+        resource_group_name);
+
+    const size_t task_num = 64;
+    std::vector<TaskPtr> tasks;
+    for (size_t i = 0; i < task_num; ++i)
+    {
+        auto task = std::make_unique<SimpleTask>(*context);
+        task->each_exec_time = std::chrono::milliseconds(1);
+        task->total_exec_times = 1;
+        tasks.push_back(std::move(task));
+    }
+
+    auto limiter = std::make_shared<KeyspaceCpuLimiter>(max_active_tasks);
+    ResourceControlQueue<CPUMultiLevelFeedbackQueue> queue(limiter);
+    queue.submit(tasks);
+
+    for (size_t i = 0; i < task_num; ++i)
+    {
+        TaskPtr task;
+        ASSERT_TRUE(queue.take(task)) << "take() was stranded on task " << i;
+        // Mirrors the scheduler releasing the reservation after execution.
+        queue.updateStatistics(task, ExecTaskStatus::RUNNING, 1'000'000);
+        FINALIZE_TASK(task);
+    }
+    EXPECT_TRUE(queue.empty());
+}
+
+TEST_F(TestResourceControlQueue, keyspaceCpuLimiterWakesBlockedWaiter)
+{
+    // One task holds the only reservation, so a concurrent take() must block
+    // until that task is released and then proceed. This guards the wakeup path.
+    constexpr KeyspaceID keyspace_id = 424243;
+    const String resource_group_name = "ks-rg-block";
+    setupMockLAC({createResourceGroupOfStaticTokenBucket(
+        resource_group_name,
+        ResourceGroup::UserMediumPriority,
+        20000,
+        false)});
+
+    const String query_id = "ks-query-block";
+    auto context = std::make_shared<PipelineExecutorContext>(
+        query_id,
+        query_id,
+        mem_tracker,
+        nullptr,
+        nullptr,
+        nullptr,
+        keyspace_id,
+        resource_group_name);
+
+    auto make_task = [&] {
+        auto task = std::make_unique<SimpleTask>(*context);
+        task->each_exec_time = std::chrono::milliseconds(1);
+        task->total_exec_times = 1;
+        return task;
+    };
+
+    auto limiter = std::make_shared<KeyspaceCpuLimiter>(1);
+    ResourceControlQueue<CPUMultiLevelFeedbackQueue> queue(limiter);
+    queue.submit(make_task());
+    queue.submit(make_task());
+
+    TaskPtr first;
+    ASSERT_TRUE(queue.take(first));
+
+    TaskPtr second;
+    std::atomic<bool> second_taken{false};
+    std::thread waiter([&] {
+        if (queue.take(second))
+            second_taken = true;
+    });
+
+    // The only reservation is still held, so the waiter cannot proceed yet.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(second_taken.load());
+
+    queue.updateStatistics(first, ExecTaskStatus::RUNNING, 1'000'000);
+    FINALIZE_TASK(first);
+
+    waiter.join();
+    EXPECT_TRUE(second_taken.load());
+    queue.updateStatistics(second, ExecTaskStatus::RUNNING, 1'000'000);
+    FINALIZE_TASK(second);
 }
 
 } // namespace DB::tests

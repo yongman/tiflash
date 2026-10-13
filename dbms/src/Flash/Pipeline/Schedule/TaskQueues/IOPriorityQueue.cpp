@@ -162,8 +162,12 @@ void IOPriorityQueue::updateStatistics(const TaskPtr & task, ExecTaskStatus exec
     {
         // A cancelled task can be returned from cancel_task_queue without ever
         // acquiring a reservation; release() is owner-aware and therefore a no-op.
+        // release() wakes limiter waiters when this keyspace can admit again.
+        // No queue-local wakeup is needed here: a completion never makes a
+        // queued task takeable (only submit() adds work), so broadcasting the
+        // queue's condition variable would only wake idle threads for nothing
+        // and storm them on every task round.
         keyspace_cpu_limiter->release(task.get());
-        notifyWaiters();
     }
 }
 
@@ -266,13 +270,13 @@ void IOPriorityQueue::notifyOneWaiter()
 {
     cv.notify_one();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 
 void IOPriorityQueue::notifyWaiters()
 {
     cv.notify_all();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 } // namespace DB

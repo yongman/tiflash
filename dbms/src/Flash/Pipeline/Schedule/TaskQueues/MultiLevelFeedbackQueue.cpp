@@ -311,8 +311,11 @@ void MultiLevelFeedbackQueue<TimeGetter>::updateStatistics(const TaskPtr & task,
     level_queues[task->mlfq_level]->accu_consume_time_microsecond += (inc_ns / 1000);
     if (keyspace_cpu_limiter && keyspace_cpu_limiter->isEnabled())
     {
+        // release() wakes limiter waiters when this keyspace can admit again.
+        // A completion never makes a queued task takeable (only submit() adds
+        // work), so we must not broadcast the queue's condition variable and
+        // storm the idle pool threads on every task round.
         keyspace_cpu_limiter->release(task.get());
-        notifyWaiters();
     }
 }
 
@@ -373,7 +376,7 @@ void MultiLevelFeedbackQueue<TimeGetter>::notifyOneWaiter()
 {
     cv.notify_one();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 
 template <typename TimeGetter>
@@ -381,7 +384,7 @@ void MultiLevelFeedbackQueue<TimeGetter>::notifyWaiters()
 {
     cv.notify_all();
     if (keyspace_cpu_limiter)
-        keyspace_cpu_limiter->notifyAll();
+        keyspace_cpu_limiter->wakeWaiters();
 }
 
 template class MultiLevelFeedbackQueue<CPUTimeGetter>;
